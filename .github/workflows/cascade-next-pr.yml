@@ -15,7 +15,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -25,20 +25,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Create next cascade PR
+      - name: Create and process next cascade PR
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.CASCADE_GITHUB_TOKEN }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            
+
             const isManual = context.eventName === 'workflow_dispatch';
 
             const baseBranch = isManual
               ? context.payload.inputs?.base_branch
               : context.payload.pull_request?.base?.ref;
-            
+
             const mergedPrNumber = isManual
               ? (context.payload.inputs?.merged_pr_number || 'manual-test')
               : context.payload.pull_request?.number;
@@ -47,7 +47,7 @@ jobs:
             core.info(`Manual inputs: ${JSON.stringify(context.payload.inputs || {})}`);
             core.info(`Base branch: ${baseBranch}`);
             core.info(`Merged PR number: ${mergedPrNumber}`);
-            
+
             if (!baseBranch) {
               core.setFailed('Base branch could not be determined.');
               return;
@@ -138,6 +138,8 @@ jobs:
               `### Cascade behavior`,
               `- Only the immediate next cascade PR is created.`,
               `- If this PR has conflicts, the cascade stops here.`,
+              `- If this PR is immediately mergeable, it will be merged automatically.`,
+              `- If this PR is waiting on merge requirements, auto-merge will be enabled.`,
               `- After this PR is resolved and merged, the next downstream cascade PR will be raised automatically.`,
               ``,
               `### Details`,
@@ -185,7 +187,7 @@ jobs:
             }
 
             let prDetails = null;
-            for (let i = 0; i < 6; i++) {
+            for (let i = 0; i < 10; i++) {
               const resp = await github.rest.pulls.get({
                 owner,
                 repo,
@@ -197,6 +199,7 @@ jobs:
             }
 
             core.info(`PR #${prNumber} mergeable = ${prDetails?.mergeable}`);
+            core.info(`PR #${prNumber} mergeable_state = ${prDetails?.mergeable_state}`);
 
             if (prDetails?.mergeable === false) {
               try {
@@ -227,6 +230,18 @@ jobs:
             }
 
             try {
+              if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
+                await github.rest.pulls.merge({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                  merge_method: 'merge'
+                });
+
+                core.info(`PR #${prNumber} merged immediately because it was already clean.`);
+                return;
+              }
+
               if (prDetails?.node_id && prDetails?.mergeable === true) {
                 const mutation = `
                   mutation($pullRequestId: ID!) {
@@ -247,5 +262,5 @@ jobs:
                 core.info(`Auto-merge not enabled because mergeability is not confirmed true yet.`);
               }
             } catch (e) {
-              core.warning(`Could not enable auto-merge. Make sure repository auto-merge is enabled. ${e.message}`);
+              core.warning(`Could not merge or enable auto-merge for PR #${prNumber}. ${e.message}`);
             }
