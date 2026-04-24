@@ -15,7 +15,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
@@ -314,31 +314,69 @@ jobs:
             }
 
             if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'unstable') {
-              core.info(`PR #${prNumber} is in unstable state. Waiting briefly and checking again.`);
-              await sleep(5000);
+              const unstableMaxAttempts = 12;
+              const unstableDelayMs = 10000;
 
-              prDetails = await getPullRequest(prNumber);
-              core.info(
-                `Recheck for PR #${prNumber}: mergeable=${prDetails?.mergeable}, mergeable_state=${prDetails?.mergeable_state}`
-              );
+              core.info(`PR #${prNumber} is in unstable state. Retrying for up to ${unstableMaxAttempts} attempts.`);
 
-              if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
-                await mergePullRequest(prNumber);
-                core.info(`PR #${prNumber} was merged after unstable state resolved to clean.`);
-                return;
+              for (let attempt = 1; attempt <= unstableMaxAttempts; attempt++) {
+                await sleep(unstableDelayMs);
+                prDetails = await getPullRequest(prNumber);
+
+                core.info(
+                  `Unstable retry ${attempt}/${unstableMaxAttempts} for PR #${prNumber}: mergeable=${prDetails?.mergeable}, mergeable_state=${prDetails?.mergeable_state}`
+                );
+
+                if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
+                  await mergePullRequest(prNumber);
+                  core.info(`PR #${prNumber} was merged after unstable state resolved to clean.`);
+                  return;
+                }
+
+                if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
+                  await addLabel(prNumber, 'cascade-conflict');
+                  await addComment(
+                    prNumber,
+                    [
+                      `This cascade PR became non-mergeable while waiting for unstable state to resolve.`,
+                      ``,
+                      isFinalMergeToDevelop
+                        ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
+                        : `The cascade stops here until this PR is resolved and merged.`,
+                      `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                    ].join('\n')
+                  );
+                  core.info(`PR #${prNumber} became non-mergeable during unstable retry window.`);
+                  return;
+                }
+
+                if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
+                  await addLabel(prNumber, 'cascade-blocked');
+                  await addComment(
+                    prNumber,
+                    [
+                      `This cascade PR became blocked by required merge conditions or repository rules while waiting.`,
+                      ``,
+                      `The workflow will not force-merge this PR.`,
+                      `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                    ].join('\n')
+                  );
+                  core.info(`PR #${prNumber} became blocked during unstable retry window.`);
+                  return;
+                }
               }
 
               await addLabel(prNumber, 'cascade-unstable');
               await addComment(
                 prNumber,
                 [
-                  `This cascade PR is in an unstable state and was not merged automatically.`,
+                  `This cascade PR remained in an unstable state and was not merged automatically.`,
                   ``,
-                  `The workflow retried once, but the PR did not become clean.`,
+                  `The workflow retried for a longer window, but the PR did not become clean.`,
                   `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
                 ].join('\n')
               );
-              core.info(`PR #${prNumber} remained unstable. Leaving it open.`);
+              core.info(`PR #${prNumber} remained unstable after extended retry window. Leaving it open.`);
               return;
             }
 
