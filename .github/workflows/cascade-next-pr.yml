@@ -1,6 +1,16 @@
 name: Cascade Next PR
 
 on:
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: "Merged-into release branch to test manually"
+        required: false
+        type: string
+      merged_pr_number:
+        description: "Merged PR number for manual testing"
+        required: false
+        type: string
   pull_request:
     types: [closed]
 
