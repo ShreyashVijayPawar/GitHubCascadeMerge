@@ -15,7 +15,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
   issues: write
 
@@ -182,7 +182,7 @@ jobs:
 
             let nextBranch;
             let isFinalMergeToDevelop = false;
-            
+
             if (currentIndex === eligibleBranches.length - 1) {
               nextBranch = 'develop';
               isFinalMergeToDevelop = true;
@@ -206,16 +206,23 @@ jobs:
               return;
             }
 
-            const title = `[Cascade] ${current.branch} -> ${nextBranch}`;
+            const title = isFinalMergeToDevelop
+              ? `[Cascade Final] ${current.branch} -> ${nextBranch}`
+              : `[Cascade] ${current.branch} -> ${nextBranch}`;
+
             const body = [
               `This PR was created automatically after PR #${mergedPrNumber} was merged into \`${current.branch}\`.`,
               ``,
               `### Cascade behavior`,
-              `- Only the next downstream cascade PR is created.`,
+              isFinalMergeToDevelop
+                ? `- This is the final cascade PR from the last eligible release branch into \`${nextBranch}\`.`
+                : `- Only the next downstream cascade PR is created.`,
               `- If this PR has conflicts, the cascade stops here.`,
               `- If this PR is immediately mergeable, it is merged automatically.`,
               `- If required branch conditions block merge, the PR remains open for review.`,
-              `- Once this PR is merged, the next downstream cascade PR can be created automatically.`,
+              isFinalMergeToDevelop
+                ? `- Once this PR is merged, the release cascade is complete.`
+                : `- Once this PR is merged, the next downstream cascade PR can be created automatically.`,
               ``,
               `### Details`,
               `- App: \`${current.app}\``,
@@ -246,7 +253,7 @@ jobs:
             const prNumber = createdPr.data.number;
             core.info(`Created cascade PR #${prNumber}`);
 
-            await addLabel(prNumber, 'cascade-pr');
+            await addLabel(prNumber, isFinalMergeToDevelop ? 'cascade-final-pr' : 'cascade-pr');
 
             let prDetails = await pollMergeability(prNumber, 10, 2000);
 
@@ -276,7 +283,9 @@ jobs:
                 [
                   `This cascade PR currently has merge conflicts or is not mergeable.`,
                   ``,
-                  `The cascade stops here until this PR is resolved and merged.`
+                  isFinalMergeToDevelop
+                    ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
+                    : `The cascade stops here until this PR is resolved and merged.`
                 ].join('\n')
               );
               core.info(`PR #${prNumber} is not mergeable. Cascade stops here.`);
