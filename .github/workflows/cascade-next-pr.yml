@@ -5,7 +5,7 @@ on:
     inputs:
       base_branch:
         description: "Merged-into release branch to test manually"
-        required: false
+        required: true
         type: string
       merged_pr_number:
         description: "Merged PR number for manual testing"
