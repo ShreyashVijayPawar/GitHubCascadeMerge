@@ -180,18 +180,6 @@ jobs:
               core.warning(`Could not add cascade-pr label. ${e.message}`);
             }
 
-            try {
-              await github.rest.pulls.requestReviewers({
-                owner,
-                repo,
-                pull_number: prNumber,
-                reviewers: [owner]
-              });
-              core.info(`Requested review from repository owner '${owner}'.`);
-            } catch (e) {
-              core.warning(`Could not request reviewer '${owner}'. ${e.message}`);
-            }
-
             async function sleep(ms) {
               return new Promise(resolve => setTimeout(resolve, ms));
             }
