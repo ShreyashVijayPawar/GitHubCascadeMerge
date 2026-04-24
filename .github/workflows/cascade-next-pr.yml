@@ -15,7 +15,7 @@ on:
     types: [closed]
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
   issues: write
 
@@ -180,13 +180,17 @@ jobs:
               return;
             }
 
+            let nextBranch;
+            let isFinalMergeToDevelop = false;
+            
             if (currentIndex === eligibleBranches.length - 1) {
-              core.info(`Branch '${current.branch}' is the last eligible branch. No downstream cascade PR is needed.`);
-              return;
+              nextBranch = 'develop';
+              isFinalMergeToDevelop = true;
+              core.info(`Branch '${current.branch}' is the last eligible release branch. Final PR will be created to '${nextBranch}'.`);
+            } else {
+              nextBranch = eligibleBranches[currentIndex + 1].branch;
+              core.info(`Next cascade target branch: ${nextBranch}`);
             }
-
-            const nextBranch = eligibleBranches[currentIndex + 1].branch;
-            core.info(`Next cascade target branch: ${nextBranch}`);
 
             const openPullRequests = await github.paginate(github.rest.pulls.list, {
               owner,
