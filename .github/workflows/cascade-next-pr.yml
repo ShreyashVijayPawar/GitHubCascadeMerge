@@ -11,7 +11,7 @@ on:
         description: "Merged PR number for manual testing"
         required: false
         type: string
-  pull_request:
+  pull_request_target:
     types: [closed]
 
 permissions:
