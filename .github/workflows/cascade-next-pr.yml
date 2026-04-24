@@ -1,21 +1,11 @@
 name: Cascade Next PR
 
 on:
-  workflow_dispatch:
-    inputs:
-      base_branch:
-        description: "Merged target release branch for manual testing"
-        required: true
-        type: string
-      merged_pr_number:
-        description: "Merged PR number for manual testing"
-        required: false
-        type: string
   pull_request_target:
     types: [closed]
 
 concurrency:
-  group: cascade-next-${{ github.event.pull_request.number || github.event.inputs.base_branch }}
+  group: cascade-next-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -25,7 +15,7 @@ permissions:
 
 jobs:
   cascade-next:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
@@ -36,15 +26,9 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const isManual = context.eventName === 'workflow_dispatch';
 
-            const baseBranch = isManual
-              ? context.payload.inputs?.base_branch
-              : context.payload.pull_request?.base?.ref;
-
-            const mergedPrNumber = isManual
-              ? (context.payload.inputs?.merged_pr_number || 'manual-test')
-              : context.payload.pull_request?.number;
+            const baseBranch = context.payload.pull_request?.base?.ref;
+            const mergedPrNumber = context.payload.pull_request?.number;
 
             core.info(`Event: ${context.eventName}`);
             core.info(`Base branch: ${baseBranch}`);
