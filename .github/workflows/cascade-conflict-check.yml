@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   check-cascade-pr:
-    if: startsWith(github.event.pull_request.title, '[Cascade]')
+    if: startsWith(github.event.pull_request.title, '[Cascade')
     runs-on: ubuntu-latest
 
     steps:
