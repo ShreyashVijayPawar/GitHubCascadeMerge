@@ -36,11 +36,11 @@ jobs:
             const isManual = context.eventName === 'workflow_dispatch';
             
             const baseBranch = isManual
-              ? core.getInput('base_branch')
+              ? context.payload.inputs.base_branch
               : context.payload.pull_request?.base?.ref;
             
             const mergedPrNumber = isManual
-              ? (core.getInput('merged_pr_number') || 'manual-test')
+              ? (context.payload.inputs.merged_pr_number || 'manual-test')
               : context.payload.pull_request?.number;
             
             core.info(`Event: ${context.eventName}`);
