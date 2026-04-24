@@ -32,10 +32,25 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const baseBranch = context.payload.pull_request.base.ref;
-            const mergedPrNumber = context.payload.pull_request.number;
-
-            core.info(`Merged PR #${mergedPrNumber} into ${baseBranch}`);
+            
+            const isManual = context.eventName === 'workflow_dispatch';
+            
+            const baseBranch = isManual
+              ? core.getInput('base_branch')
+              : context.payload.pull_request?.base?.ref;
+            
+            const mergedPrNumber = isManual
+              ? (core.getInput('merged_pr_number') || 'manual-test')
+              : context.payload.pull_request?.number;
+            
+            core.info(`Event: ${context.eventName}`);
+            core.info(`Base branch: ${baseBranch}`);
+            core.info(`Merged PR number: ${mergedPrNumber}`);
+            
+            if (!baseBranch) {
+              core.setFailed('Base branch could not be determined.');
+              return;
+            }
 
             const releaseRegex = /^release\/(?<app>[A-Za-z0-9._-]+)_(?<version>\d+\.\d{2})(?:[-_].*)?$/;
 
