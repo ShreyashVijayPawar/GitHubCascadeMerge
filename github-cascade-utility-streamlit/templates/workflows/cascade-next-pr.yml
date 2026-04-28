@@ -1,0 +1,380 @@
+name: Cascade Next PR
+
+on:
+  pull_request_target:
+    types: [closed]
+
+concurrency:
+  group: cascade-next-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  cascade-next:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create and process next cascade PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CASCADE_GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const baseBranch = context.payload.pull_request?.base?.ref;
+            const mergedPrNumber = context.payload.pull_request?.number;
+
+            core.info(`Event: ${context.eventName}`);
+            core.info(`Base branch: ${baseBranch}`);
+            core.info(`Merged PR number: ${mergedPrNumber}`);
+
+            if (!baseBranch) {
+              core.setFailed('Base branch could not be determined.');
+              return;
+            }
+
+            const releaseRegex = /^release\/(?<app>[A-Za-z0-9._-]+)_(?<version>\d+\.\d{2})(?:[-_].*)?$/;
+
+            function parseBranch(branch) {
+              const match = branch.match(releaseRegex);
+              if (!match) return null;
+
+              const { app, version } = match.groups;
+              return {
+                branch,
+                app,
+                version,
+                versionParts: version.split('.').map(v => parseInt(v, 10))
+              };
+            }
+
+            function compareVersionOnly(a, b) {
+              const len = Math.max(a.versionParts.length, b.versionParts.length);
+              for (let i = 0; i < len; i++) {
+                const av = a.versionParts[i] ?? 0;
+                const bv = b.versionParts[i] ?? 0;
+                if (av < bv) return -1;
+                if (av > bv) return 1;
+              }
+              return 0;
+            }
+
+            async function sleep(ms) {
+              return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            async function getPullRequest(prNumber) {
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber
+              });
+              return response.data;
+            }
+
+            async function pollMergeability(prNumber, maxAttempts = 10, delayMs = 2000) {
+              let pr = null;
+
+              for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                pr = await getPullRequest(prNumber);
+
+                core.info(
+                  `Poll ${attempt}/${maxAttempts} for PR #${prNumber}: mergeable=${pr.mergeable}, mergeable_state=${pr.mergeable_state}`
+                );
+
+                if (pr.mergeable !== null) {
+                  return pr;
+                }
+
+                if (attempt < maxAttempts) {
+                  await sleep(delayMs);
+                }
+              }
+
+              return pr;
+            }
+
+            async function addLabel(prNumber, label) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  labels: [label]
+                });
+              } catch (error) {
+                core.warning(`Could not add label '${label}' to PR #${prNumber}. ${error.message}`);
+              }
+            }
+
+            async function addComment(prNumber, body) {
+              try {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: prNumber,
+                  body
+                });
+              } catch (error) {
+                core.warning(`Could not add comment to PR #${prNumber}. ${error.message}`);
+              }
+            }
+
+            async function mergePullRequest(prNumber) {
+              await github.rest.pulls.merge({
+                owner,
+                repo,
+                pull_number: prNumber,
+                merge_method: 'merge'
+              });
+            }
+
+            const current = parseBranch(baseBranch);
+            if (!current) {
+              core.info(`Base branch '${baseBranch}' does not match the release cascade pattern. Exiting.`);
+              return;
+            }
+
+            const branches = await github.paginate(github.rest.repos.listBranches, {
+              owner,
+              repo,
+              per_page: 100
+            });
+
+            const eligibleBranches = branches
+              .map(branch => parseBranch(branch.name))
+              .filter(Boolean)
+              .filter(branch => branch.app === current.app)
+              .sort(compareVersionOnly);
+
+            if (eligibleBranches.length === 0) {
+              core.info(`No eligible release branches found for app '${current.app}'. Exiting.`);
+              return;
+            }
+
+            core.info(
+              `Eligible ordered branches for app '${current.app}': ${eligibleBranches.map(branch => branch.branch).join(' -> ')}`
+            );
+
+            const currentIndex = eligibleBranches.findIndex(branch => branch.branch === current.branch);
+            if (currentIndex === -1) {
+              core.setFailed(`Current branch '${current.branch}' was not found in the eligible branch list.`);
+              return;
+            }
+
+            let nextBranch;
+            let isFinalMergeToDevelop = false;
+
+            if (currentIndex === eligibleBranches.length - 1) {
+              nextBranch = 'develop';
+              isFinalMergeToDevelop = true;
+              core.info(`Branch '${current.branch}' is the last eligible release branch. Final PR will be created to '${nextBranch}'.`);
+            } else {
+              nextBranch = eligibleBranches[currentIndex + 1].branch;
+              core.info(`Next cascade target branch: ${nextBranch}`);
+            }
+
+            const openPullRequests = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              base: nextBranch,
+              per_page: 100
+            });
+
+            const existingPr = openPullRequests.find(pr => pr.head.ref === current.branch);
+            if (existingPr) {
+              core.info(`An open cascade PR already exists: #${existingPr.number} (${current.branch} -> ${nextBranch}).`);
+              return;
+            }
+
+            const title = isFinalMergeToDevelop
+              ? `[Cascade Final] ${current.branch} -> ${nextBranch}`
+              : `[Cascade] ${current.branch} -> ${nextBranch}`;
+
+            const body = [
+              `This PR was created automatically after PR #${mergedPrNumber} was merged into \`${current.branch}\`.`,
+              ``,
+              `### Cascade behavior`,
+              isFinalMergeToDevelop
+                ? `- This is the final cascade PR from the last eligible release branch into \`${nextBranch}\`.`
+                : `- Only the next downstream cascade PR is created.`,
+              `- If this PR has conflicts, the cascade stops here.`,
+              `- If this PR is immediately mergeable, it is merged automatically.`,
+              `- If required branch conditions block merge, the PR remains open for review.`,
+              isFinalMergeToDevelop
+                ? `- Once this PR is merged, the release cascade is complete.`
+                : `- Once this PR is merged, the next downstream cascade PR can be created automatically.`,
+              ``,
+              `### Details`,
+              `- App: \`${current.app}\``,
+              `- Current version: \`${current.version}\``,
+              `- Source branch: \`${current.branch}\``,
+              `- Target branch: \`${nextBranch}\``
+            ].join('\n');
+
+            let createdPr;
+            try {
+              createdPr = await github.rest.pulls.create({
+                owner,
+                repo,
+                head: current.branch,
+                base: nextBranch,
+                title,
+                body,
+                maintainer_can_modify: true
+              });
+            } catch (error) {
+              if (error.status === 422) {
+                core.warning(`Cascade PR was not created. This may mean there is no diff or an equivalent PR already exists. ${error.message}`);
+                return;
+              }
+              throw error;
+            }
+
+            const prNumber = createdPr.data.number;
+            core.info(`Created cascade PR #${prNumber}`);
+
+            await addLabel(prNumber, isFinalMergeToDevelop ? 'cascade-final-pr' : 'cascade-pr');
+
+            let prDetails = await pollMergeability(prNumber, 10, 2000);
+
+            core.info(
+              `Final mergeability for PR #${prNumber}: mergeable=${prDetails?.mergeable}, mergeable_state=${prDetails?.mergeable_state}`
+            );
+
+            if (prDetails?.mergeable === null || prDetails?.mergeable_state === 'unknown') {
+              await addLabel(prNumber, 'cascade-pending');
+              await addComment(
+                prNumber,
+                [
+                  `The workflow could not determine mergeability for this cascade PR within the polling window.`,
+                  ``,
+                  `The PR has been left open for manual review or a later retry.`,
+                  `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                ].join('\n')
+              );
+              core.info(`PR #${prNumber} remained unresolved after polling. Leaving it open.`);
+              return;
+            }
+
+            if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
+              await addLabel(prNumber, 'cascade-conflict');
+              await addComment(
+                prNumber,
+                [
+                  `This cascade PR currently has merge conflicts or is not mergeable.`,
+                  ``,
+                  isFinalMergeToDevelop
+                    ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
+                    : `The cascade stops here until this PR is resolved and merged.`
+                ].join('\n')
+              );
+              core.info(`PR #${prNumber} is not mergeable. Cascade stops here.`);
+              return;
+            }
+
+            if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
+              await mergePullRequest(prNumber);
+              core.info(`PR #${prNumber} was merged immediately because it is in clean state.`);
+              return;
+            }
+
+            if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
+              await addLabel(prNumber, 'cascade-blocked');
+              await addComment(
+                prNumber,
+                [
+                  `This cascade PR is currently blocked by required merge conditions or repository rules.`,
+                  ``,
+                  `The workflow will not force-merge this PR.`,
+                  `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                ].join('\n')
+              );
+              core.info(`PR #${prNumber} is blocked. Leaving it open for required conditions to be satisfied.`);
+              return;
+            }
+
+            if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'unstable') {
+              const unstableMaxAttempts = 12;
+              const unstableDelayMs = 10000;
+
+              core.info(`PR #${prNumber} is in unstable state. Retrying for up to ${unstableMaxAttempts} attempts.`);
+
+              for (let attempt = 1; attempt <= unstableMaxAttempts; attempt++) {
+                await sleep(unstableDelayMs);
+                prDetails = await getPullRequest(prNumber);
+
+                core.info(
+                  `Unstable retry ${attempt}/${unstableMaxAttempts} for PR #${prNumber}: mergeable=${prDetails?.mergeable}, mergeable_state=${prDetails?.mergeable_state}`
+                );
+
+                if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
+                  await mergePullRequest(prNumber);
+                  core.info(`PR #${prNumber} was merged after unstable state resolved to clean.`);
+                  return;
+                }
+
+                if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
+                  await addLabel(prNumber, 'cascade-conflict');
+                  await addComment(
+                    prNumber,
+                    [
+                      `This cascade PR became non-mergeable while waiting for unstable state to resolve.`,
+                      ``,
+                      isFinalMergeToDevelop
+                        ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
+                        : `The cascade stops here until this PR is resolved and merged.`,
+                      `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                    ].join('\n')
+                  );
+                  core.info(`PR #${prNumber} became non-mergeable during unstable retry window.`);
+                  return;
+                }
+
+                if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
+                  await addLabel(prNumber, 'cascade-blocked');
+                  await addComment(
+                    prNumber,
+                    [
+                      `This cascade PR became blocked by required merge conditions or repository rules while waiting.`,
+                      ``,
+                      `The workflow will not force-merge this PR.`,
+                      `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                    ].join('\n')
+                  );
+                  core.info(`PR #${prNumber} became blocked during unstable retry window.`);
+                  return;
+                }
+              }
+
+              await addLabel(prNumber, 'cascade-unstable');
+              await addComment(
+                prNumber,
+                [
+                  `This cascade PR remained in an unstable state and was not merged automatically.`,
+                  ``,
+                  `The workflow retried for a longer window, but the PR did not become clean.`,
+                  `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+                ].join('\n')
+              );
+              core.info(`PR #${prNumber} remained unstable after extended retry window. Leaving it open.`);
+              return;
+            }
+
+            await addLabel(prNumber, 'cascade-manual-review');
+            await addComment(
+              prNumber,
+              [
+                `This cascade PR reached an unhandled mergeability state and requires manual review.`,
+                ``,
+                `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
+              ].join('\n')
+            );
+            core.warning(`PR #${prNumber} reached an unhandled state. Leaving it open.`);

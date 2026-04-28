@@ -1,0 +1,14 @@
+{
+  "repositories": [
+    {
+      "repositoryUrl": "https://github.com/owner/repo-one",
+      "patToken": "github_pat_xxx_1",
+      "raisePr": "Y"
+    },
+    {
+      "repositoryUrl": "https://github.com/owner/repo-two",
+      "patToken": "github_pat_xxx_2",
+      "raisePr": "N"
+    }
+  ]
+}
