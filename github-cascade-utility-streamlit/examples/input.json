@@ -1,14 +1,15 @@
 {
+  "defaultSetupFlags": {
+    "createLabels": "Y",
+    "createSecret": "Y",
+    "enableAutoMerge": "Y",
+    "createWorkflows": "Y"
+  },
   "repositories": [
     {
-      "repositoryUrl": "https://github.com/owner/repo-one",
-      "patToken": "github_pat_xxx_1",
-      "raisePr": "Y"
-    },
-    {
-      "repositoryUrl": "https://github.com/owner/repo-two",
-      "patToken": "github_pat_xxx_2",
-      "raisePr": "N"
+      "repository": "owner/service-a",
+      "patToken": "ghp_your_token_here",
+      "jiraId": "ABC-123"
     }
   ]
 }

@@ -1,190 +1,333 @@
-import base64
-from datetime import datetime
-from pathlib import Path
-from urllib.parse import urlparse
+import json
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 import requests
+from github import Github
+from nacl import encoding, public
 
-API_BASE = "https://api.github.com"
-SCRIPT_DIR = Path(__file__).resolve().parent
-TEMPLATES_DIR = SCRIPT_DIR / "templates" / "workflows"
-WORKFLOW_FILES = {
-    "cascade-next-pr.yml": ".github/workflows/cascade-next-pr.yml",
-    "cascade-conflict-check.yml": ".github/workflows/cascade-conflict-check.yml",
+FLAG_KEYS = ["createLabels", "createSecret", "enableAutoMerge", "createWorkflows"]
+DEFAULT_FLAG_VALUE = "Y"
+
+REQUIRED_LABELS: Dict[str, Dict[str, str]] = {
+    "cascade-pr": {
+        "color": "0e8a16",
+        "description": "PR created by cascade workflow",
+    },
+    "cascade-final-pr": {
+        "color": "5319e7",
+        "description": "Final cascade PR into non-release branch",
+    },
+    "cascade-conflict": {
+        "color": "b60205",
+        "description": "Cascade PR has merge conflicts",
+    },
+    "cascade-blocked": {
+        "color": "d93f0b",
+        "description": "Cascade PR blocked by required checks or rules",
+    },
+    "cascade-unstable": {
+        "color": "f9d0c4",
+        "description": "Mergeability unstable after cascade polling",
+    },
+    "cascade-pending": {
+        "color": "c2e0c6",
+        "description": "Cascade PR mergeability still pending",
+    },
+    "cascade-manual-review": {
+        "color": "fef2c0",
+        "description": "Cascade PR needs manual attention",
+    },
+}
+
+HELP_DOCS = {
+    "labels": "Docs/manual-create-labels.md",
+    "secrets": "Docs/manual-create-secret.md",
+    "autoMerge": "Docs/manual-enable-auto-merge.md",
+    "workflows": "Docs/manual-setup-workflows.md",
 }
 
 
-class GitHubApiError(Exception):
-    pass
+@dataclass
+class StepResult:
+    status: str
+    failed: Optional[str] = None
+    manualDoc: Optional[str] = None
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = {"status": self.status}
+        if self.failed:
+            data["failed"] = self.failed
+        if self.manualDoc:
+            data["manualDoc"] = self.manualDoc
+        data.update(self.details)
+        return data
 
 
-class GitHubClient:
-    def __init__(self, token: str):
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-
-    def _request(self, method: str, url: str, expected_status=None, **kwargs):
-        response = self.session.request(method, url, **kwargs)
-        if expected_status and response.status_code not in expected_status:
-            raise GitHubApiError(f"GitHub API error {response.status_code}: {response.text}")
-        if not expected_status and response.status_code >= 400:
-            raise GitHubApiError(f"GitHub API error {response.status_code}: {response.text}")
-        if response.text:
-            return response.json()
-        return None
-
-    def get_repository(self, owner: str, repo: str):
-        return self._request("GET", f"{API_BASE}/repos/{owner}/{repo}", expected_status={200})
-
-    def get_branch(self, owner: str, repo: str, branch: str):
-        return self._request("GET", f"{API_BASE}/repos/{owner}/{repo}/branches/{branch}", expected_status={200})
-
-    def create_branch(self, owner: str, repo: str, branch_name: str, sha: str):
-        payload = {"ref": f"refs/heads/{branch_name}", "sha": sha}
-        return self._request("POST", f"{API_BASE}/repos/{owner}/{repo}/git/refs", json=payload, expected_status={201})
-
-    def get_content(self, owner: str, repo: str, path: str, branch: str):
-        response = self.session.get(f"{API_BASE}/repos/{owner}/{repo}/contents/{path}", params={"ref": branch})
-        if response.status_code == 404:
-            return None
-        if response.status_code >= 400:
-            raise GitHubApiError(f"GitHub API error {response.status_code}: {response.text}")
-        return response.json()
-
-    def put_file(self, owner: str, repo: str, path: str, branch: str, message: str, content: str, sha=None):
-        payload = {
-            "message": message,
-            "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
-            "branch": branch,
-        }
-        if sha:
-            payload["sha"] = sha
-        return self._request("PUT", f"{API_BASE}/repos/{owner}/{repo}/contents/{path}", json=payload, expected_status={200, 201})
-
-    def create_pull_request(self, owner: str, repo: str, title: str, head: str, base: str, body: str):
-        payload = {"title": title, "head": head, "base": base, "body": body}
-        return self._request("POST", f"{API_BASE}/repos/{owner}/{repo}/pulls", json=payload, expected_status={201})
+def _normalize_flag(value: Optional[str]) -> str:
+    if value is None:
+        return DEFAULT_FLAG_VALUE
+    v = value.strip().upper()
+    return v if v in ("Y", "N") else DEFAULT_FLAG_VALUE
 
 
-def parse_repo_url(repository_url: str):
-    cleaned = repository_url.strip()
-    if cleaned.endswith(".git"):
-        cleaned = cleaned[:-4]
-
-    parsed = urlparse(cleaned)
-    path = parsed.path.strip("/")
-    parts = path.split("/")
-
-    if parsed.netloc.lower() != "github.com" or len(parts) < 2:
-        raise ValueError(f"Invalid GitHub repository URL: {repository_url}")
-
-    return parts[0], parts[1]
-
-
-def load_templates():
-    templates = {}
-    for filename in WORKFLOW_FILES:
-        file_path = TEMPLATES_DIR / filename
-        if not file_path.exists():
-            raise FileNotFoundError(f"Missing workflow template: {file_path}")
-        templates[filename] = file_path.read_text(encoding="utf-8")
-    return templates
+def resolve_flags(default_flags: Optional[Dict[str, str]], repo_flags: Optional[Dict[str, str]]) -> Dict[str, str]:
+    default_flags = default_flags or {}
+    repo_flags = repo_flags or {}
+    effective: Dict[str, str] = {}
+    for key in FLAG_KEYS:
+        if key in repo_flags:
+            effective[key] = _normalize_flag(repo_flags[key])
+        elif key in default_flags:
+            effective[key] = _normalize_flag(default_flags[key])
+        else:
+            effective[key] = DEFAULT_FLAG_VALUE
+    return effective
 
 
-def create_feature_branch_name(prefix: str):
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{prefix}-{timestamp}"
+def parse_config(raw_json: str) -> Dict[str, Any]:
+    return json.loads(raw_json)
 
 
-def propagate_single(repo_input: dict, branch_prefix: str = "feature/add-cascade-workflows"):
-    repository_url = repo_input.get("repositoryUrl", "").strip()
-    pat_token = repo_input.get("patToken", "").strip()
-    raise_pr = repo_input.get("raisePr", "N").strip().upper()
+def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    errors: List[Dict[str, Any]] = []
 
-    if not repository_url:
-        raise ValueError("repositoryUrl is required")
-    if not pat_token:
-        raise ValueError("patToken is required")
-    if raise_pr not in {"Y", "N"}:
-        raise ValueError("raisePr must be Y or N")
+    if not isinstance(config, dict):
+        errors.append({"level": "global", "repository": None, "message": "Config must be a JSON object."})
+        return errors
 
-    owner, repo = parse_repo_url(repository_url)
-    client = GitHubClient(pat_token)
-    templates = load_templates()
+    repos = config.get("repositories")
+    if not isinstance(repos, list) or not repos:
+        errors.append({"level": "global", "repository": None, "message": "`repositories` must be a non-empty list."})
+        return errors
 
-    repo_data = client.get_repository(owner, repo)
-    default_branch = repo_data["default_branch"]
+    default_flags = config.get("defaultSetupFlags", {})
 
-    branch_data = client.get_branch(owner, repo, default_branch)
-    sha = branch_data["commit"]["sha"]
+    for idx, repo_cfg in enumerate(repos):
+        if not isinstance(repo_cfg, dict):
+            errors.append({"level": "repository", "repository": f"index {idx}", "message": "Repository entry must be an object."})
+            continue
 
-    feature_branch = create_feature_branch_name(branch_prefix)
-    client.create_branch(owner, repo, feature_branch, sha)
+        repo_name = repo_cfg.get("repository")
+        if not isinstance(repo_name, str) or repo_name.count("/") != 1:
+            errors.append({"level": "repository", "repository": repo_name, "message": "`repository` must be of form 'owner/name'."})
 
-    for source_name, target_path in WORKFLOW_FILES.items():
-        content = templates[source_name]
-        existing = client.get_content(owner, repo, target_path, feature_branch)
-        existing_sha = existing.get("sha") if existing else None
-        client.put_file(
-            owner=owner,
-            repo=repo,
-            path=target_path,
-            branch=feature_branch,
-            message=f"Add/update {target_path}",
-            content=content,
-            sha=existing_sha,
-        )
+        pat = repo_cfg.get("patToken")
+        if not isinstance(pat, str) or not pat.strip():
+            errors.append({"level": "repository", "repository": repo_name, "message": "`patToken` is required and must be non-empty."})
 
-    result = {
-        "repositoryUrl": repository_url,
-        "owner": owner,
-        "repo": repo,
-        "defaultBranch": default_branch,
-        "featureBranch": feature_branch,
-        "raisePr": raise_pr,
-        "pullRequestUrl": None,
-        "status": "SUCCESS",
-        "message": "Feature branch created and workflow files pushed successfully.",
-    }
+        repo_flags = repo_cfg.get("setupFlags", {})
+        if repo_flags and not isinstance(repo_flags, dict):
+            errors.append({"level": "repository", "repository": repo_name, "message": "`setupFlags` must be an object if present."})
+            repo_flags = {}
 
-    if raise_pr == "Y":
-        pr = client.create_pull_request(
-            owner=owner,
-            repo=repo,
-            title="Add cascade merge workflows",
+        effective = resolve_flags(default_flags, repo_flags)
+
+        if effective.get("createWorkflows", "Y") == "Y":
+            jira_id = repo_cfg.get("jiraId")
+            if not isinstance(jira_id, str) or not jira_id.strip():
+                errors.append({
+                    "level": "repository",
+                    "repository": repo_name,
+                    "message": "`jiraId` is required and must be non-empty when createWorkflows = 'Y'.",
+                })
+
+    return errors
+
+
+def ensure_labels(gh_repo) -> Dict[str, Any]:
+    created, already = [], []
+    try:
+        existing = {lbl.name for lbl in gh_repo.get_labels()}
+        for name, meta in REQUIRED_LABELS.items():
+            if name in existing:
+                already.append(name)
+                continue
+            gh_repo.create_label(name=name, color=meta["color"], description=meta["description"])
+            created.append(name)
+        if created and already:
+            status = "partial"
+        elif created:
+            status = "created"
+        else:
+            status = "alreadyPresent"
+        return StepResult(status=status, manualDoc=HELP_DOCS["labels"], details={"created": created, "alreadyPresent": already}).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["labels"]).to_dict()
+
+
+def _encrypt_secret(public_key: str, secret_value: str) -> str:
+    pk = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
+    sealed_box = public.SealedBox(pk)
+    encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
+    return encoding.Base64Encoder().encode(encrypted).decode("utf-8")
+
+
+def ensure_cascade_secret(owner: str, repo: str, pat: str, cascade_token: str) -> Dict[str, Any]:
+    headers = {"Authorization": f"token {pat}", "Accept": "application/vnd.github+json"}
+    base = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets"
+
+    try:
+        r = requests.get(f"{base}/CASCADE_GITHUB_TOKEN", headers=headers, timeout=10)
+        if r.status_code == 200:
+            return StepResult(status="alreadyPresent", manualDoc=HELP_DOCS["secrets"]).to_dict()
+        if r.status_code not in (404,):
+            return StepResult(status="failed", failed=f"Unexpected status when checking secret: {r.status_code} {r.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+
+        r_pk = requests.get(f"{base}/public-key", headers=headers, timeout=10)
+        if r_pk.status_code != 200:
+            return StepResult(status="failed", failed=f"Failed to get public key: {r_pk.status_code} {r_pk.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+        data = r_pk.json()
+        encrypted = _encrypt_secret(data["key"], cascade_token)
+        put_body = {"encrypted_value": encrypted, "key_id": data["key_id"]}
+        r_put = requests.put(f"{base}/CASCADE_GITHUB_TOKEN", headers=headers, json=put_body, timeout=10)
+        if r_put.status_code not in (201, 204):
+            return StepResult(status="failed", failed=f"Failed to create secret: {r_put.status_code} {r_put.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+        return StepResult(status="created", manualDoc=HELP_DOCS["secrets"]).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["secrets"]).to_dict()
+
+
+def ensure_auto_merge_enabled(gh_repo) -> Dict[str, Any]:
+    try:
+        if getattr(gh_repo, "allow_auto_merge", False):
+            return StepResult(status="alreadyEnabled", manualDoc=HELP_DOCS["autoMerge"]).to_dict()
+        gh_repo.edit(allow_auto_merge=True)
+        return StepResult(status="enabled", manualDoc=HELP_DOCS["autoMerge"]).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["autoMerge"]).to_dict()
+
+
+def _make_feature_branch_name() -> str:
+    from datetime import datetime
+    ts = datetime.utcnow().strftime("%d_%m_%Y_%H_%M_%S")
+    return f"feature/cascade-workflows-{ts}"
+
+
+def sync_workflows_via_feature_branch(gh_repo, owner: str, repo: str, token: str, jira_id: str, templates_dir: str) -> Dict[str, Any]:
+    import os
+
+    created: List[str] = []
+    updated: List[str] = []
+
+    try:
+        default_branch = gh_repo.default_branch
+        ref = gh_repo.get_git_ref(f"heads/{default_branch}")
+        base_sha = ref.object.sha
+
+        feature_branch = _make_feature_branch_name()
+        gh_repo.create_git_ref(ref=f"refs/heads/{feature_branch}", sha=base_sha)
+
+        commit_message = f"{jira_id} Update cascade workflow configuration"
+
+        for filename in ("cascade-next-pr.yml", "cascade-conflict-check.yml"):
+            rel_path = os.path.join(templates_dir, filename)
+            with open(rel_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            target_path = f".github/workflows/{filename}"
+            try:
+                existing = gh_repo.get_contents(target_path, ref=feature_branch)
+                gh_repo.update_file(path=target_path, message=commit_message, content=content, sha=existing.sha, branch=feature_branch)
+                updated.append(target_path)
+            except Exception:
+                gh_repo.create_file(path=target_path, message=commit_message, content=content, branch=feature_branch)
+                created.append(target_path)
+
+        pr = gh_repo.create_pull(
+            title="Add/update cascade workflows",
+            body="Automated setup of cascade workflows.",
             head=feature_branch,
             base=default_branch,
-            body="This PR adds the cascade merge workflow files.",
         )
-        result["pullRequestUrl"] = pr.get("html_url")
-        result["message"] = "Feature branch created, workflow files pushed, and PR raised successfully."
+
+        status = "created" if created and not updated else "updated" if updated and not created else "partial"
+
+        return StepResult(
+            status=status,
+            manualDoc=HELP_DOCS["workflows"],
+            details={
+                "created": created,
+                "updated": updated,
+                "branch": feature_branch,
+                "pullRequestUrl": pr.html_url,
+            },
+        ).to_dict()
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["workflows"]).to_dict()
+
+
+def process_repository(repo_cfg: Dict[str, Any], default_flags: Dict[str, str]) -> Dict[str, Any]:
+    repo_name = repo_cfg["repository"]
+    owner, repo = repo_name.split("/", 1)
+    token = repo_cfg["patToken"].strip()
+    jira_id = repo_cfg.get("jiraId")
+
+    flags = resolve_flags(default_flags, repo_cfg.get("setupFlags"))
+
+    gh = Github(token)
+    gh_repo = gh.get_repo(f"{owner}/{repo}")
+
+    result: Dict[str, Any] = {
+        "repository": repo_name,
+        "flags": flags,
+        "steps": {},
+    }
+
+    if flags["createLabels"] == "Y":
+        result["steps"]["labels"] = ensure_labels(gh_repo)
+    else:
+        result["steps"]["labels"] = StepResult(status="skippedByFlag").to_dict()
+
+    if flags["createSecret"] == "Y":
+        result["steps"]["secret"] = ensure_cascade_secret(owner, repo, token, token)
+    else:
+        result["steps"]["secret"] = StepResult(status="skippedByFlag").to_dict()
+
+    if flags["enableAutoMerge"] == "Y":
+        result["steps"]["enableAutoMerge"] = ensure_auto_merge_enabled(gh_repo)
+    else:
+        result["steps"]["enableAutoMerge"] = StepResult(status="skippedByFlag").to_dict()
+
+    if flags["createWorkflows"] == "Y":
+        if not isinstance(jira_id, str) or not jira_id.strip():
+            result["steps"]["workflows"] = StepResult(
+                status="failed",
+                failed="`jiraId` is required and must be non-empty when createWorkflows = 'Y' for this repository.",
+                manualDoc=HELP_DOCS["workflows"],
+            ).to_dict()
+        else:
+            result["steps"]["workflows"] = sync_workflows_via_feature_branch(
+                gh_repo=gh_repo,
+                owner=owner,
+                repo=repo,
+                token=token,
+                jira_id=jira_id.strip(),
+                templates_dir="templates/workflows",
+            )
+    else:
+        result["steps"]["workflows"] = StepResult(status="skippedByFlag").to_dict()
 
     return result
 
 
-def propagate_batch(payload: dict, branch_prefix: str = "feature/add-cascade-workflows"):
-    repositories = payload.get("repositories", [])
-    if not isinstance(repositories, list) or not repositories:
-        raise ValueError("Input JSON must contain a non-empty 'repositories' array")
-
-    results = []
-    for repo_input in repositories:
+def run_all(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    default_flags = config.get("defaultSetupFlags", {})
+    repos = config.get("repositories", [])
+    results: List[Dict[str, Any]] = []
+    for repo_cfg in repos:
         try:
-            results.append(propagate_single(repo_input, branch_prefix=branch_prefix))
-        except Exception as exc:
+            results.append(process_repository(repo_cfg, default_flags))
+        except Exception as exc:  # noqa: BLE001
+            repo_name = repo_cfg.get("repository")
             results.append({
-                "repositoryUrl": repo_input.get("repositoryUrl"),
-                "owner": None,
-                "repo": None,
-                "defaultBranch": None,
-                "featureBranch": None,
-                "raisePr": repo_input.get("raisePr"),
-                "pullRequestUrl": None,
-                "status": "FAILED",
-                "message": str(exc),
+                "repository": repo_name,
+                "flags": resolve_flags(default_flags, repo_cfg.get("setupFlags")),
+                "steps": {
+                    "labels": StepResult(status="failed", failed=str(exc)).to_dict(),
+                    "secret": StepResult(status="failed", failed=str(exc)).to_dict(),
+                    "enableAutoMerge": StepResult(status="failed", failed=str(exc)).to_dict(),
+                    "workflows": StepResult(status="failed", failed=str(exc)).to_dict(),
+                },
             })
     return results
