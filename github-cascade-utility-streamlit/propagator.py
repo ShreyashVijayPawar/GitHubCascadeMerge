@@ -137,24 +137,61 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def ensure_labels(gh_repo) -> Dict[str, Any]:
-    created, already = [], []
+    created: List[str] = []
+    existing: List[str] = []
+    missing: List[str] = []
+
     try:
-        existing = {lbl.name for lbl in gh_repo.get_labels()}
+        # Collect existing label names
+        current = {lbl.name for lbl in gh_repo.get_labels()}
+
+        # Try to ensure each required label
         for name, meta in REQUIRED_LABELS.items():
-            if name in existing:
-                already.append(name)
+            if name in current:
+                existing.append(name)
                 continue
-            gh_repo.create_label(name=name, color=meta["color"], description=meta["description"])
-            created.append(name)
-        if created and already:
+
+            try:
+                gh_repo.create_label(
+                    name=name,
+                    color=meta["color"],
+                    description=meta["description"],
+                )
+                created.append(name)
+            except Exception as create_exc:  # noqa: BLE001
+                # Could not create this label; record as missing
+                missing.append(name)
+
+        # Decide overall status
+        if missing and (created or existing):
             status = "partial"
-        elif created:
+        elif missing and not (created or existing):
+            status = "failed"
+        elif created and not missing:
             status = "created"
         else:
             status = "alreadyPresent"
-        return StepResult(status=status, manualDoc=HELP_DOCS["labels"], details={"created": created, "alreadyPresent": already}).to_dict()
+
+        return StepResult(
+            status=status,
+            manualDoc=HELP_DOCS["labels"],
+            details={
+                # old names (if you still want them)
+                "created": created,
+                "alreadyPresent": existing,
+                # new names used by app.py for indentation
+                "createdLabels": created,
+                "existingLabels": existing,
+                "missingLabels": missing,
+            },
+        ).to_dict()
+
     except Exception as exc:  # noqa: BLE001
-        return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["labels"]).to_dict()
+        return StepResult(
+            status="failed",
+            failed=str(exc),
+            manualDoc=HELP_DOCS["labels"],
+        ).to_dict()
 
 
 def _encrypt_secret(public_key: str, secret_value: str) -> str:
