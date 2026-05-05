@@ -3,8 +3,10 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import requests
-from github import Github
+from github import Github, GithubException
 from nacl import encoding, public
+from datetime import datetime, UTC
+import os
 
 FLAG_KEYS = ["createLabels", "createSecret", "enableAutoMerge", "createWorkflows"]
 DEFAULT_FLAG_VALUE = "Y"
@@ -140,6 +142,7 @@ def ensure_labels(gh_repo) -> Dict[str, Any]:
     created: List[str] = []
     existing: List[str] = []
     missing: List[str] = []
+    label_errors: Dict[str, str] = {}
 
     try:
         # Collect existing label names
@@ -158,9 +161,11 @@ def ensure_labels(gh_repo) -> Dict[str, Any]:
                     description=meta["description"],
                 )
                 created.append(name)
-            except Exception as create_exc:  # noqa: BLE001
+            except GithubException as create_exc:
                 # Could not create this label; record as missing
                 missing.append(name)
+                msg = getattr(create_exc, "data", None) or str(create_exc)
+                label_errors[name] = str(msg)
 
         # Decide overall status
         if missing and (created or existing):
@@ -176,13 +181,10 @@ def ensure_labels(gh_repo) -> Dict[str, Any]:
             status=status,
             manualDoc=HELP_DOCS["labels"],
             details={
-                # old names (if you still want them)
-                "created": created,
-                "alreadyPresent": existing,
-                # new names used by app.py for indentation
                 "createdLabels": created,
                 "existingLabels": existing,
                 "missingLabels": missing,
+                "labelErrors": label_errors,
             },
         ).to_dict()
 
@@ -195,10 +197,10 @@ def ensure_labels(gh_repo) -> Dict[str, Any]:
 
 
 def _encrypt_secret(public_key: str, secret_value: str) -> str:
-    pk = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
+    pk = public.PublicKey(public_key, encoder=encoding.Base64Encoder)
     sealed_box = public.SealedBox(pk)
     encrypted = sealed_box.encrypt(secret_value.encode("utf-8"))
-    return encoding.Base64Encoder().encode(encrypted).decode("utf-8")
+    return encoding.Base64Encoder.encode(encrypted).decode("utf-8")
 
 
 def ensure_cascade_secret(owner: str, repo: str, pat: str, cascade_token: str) -> Dict[str, Any]:
@@ -237,14 +239,11 @@ def ensure_auto_merge_enabled(gh_repo) -> Dict[str, Any]:
 
 
 def _make_feature_branch_name() -> str:
-    from datetime import datetime
-    ts = datetime.utcnow().strftime("%d_%m_%Y_%H_%M_%S")
+    ts = datetime.now(UTC).strftime("%d_%m_%Y_%H_%M_%S")
     return f"feature/cascade-workflows-{ts}"
 
 
-def sync_workflows_via_feature_branch(gh_repo, owner: str, repo: str, token: str, jira_id: str, templates_dir: str) -> Dict[str, Any]:
-    import os
-
+def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str) -> Dict[str, Any]:
     created: List[str] = []
     updated: List[str] = []
 
@@ -256,7 +255,7 @@ def sync_workflows_via_feature_branch(gh_repo, owner: str, repo: str, token: str
         feature_branch = _make_feature_branch_name()
         gh_repo.create_git_ref(ref=f"refs/heads/{feature_branch}", sha=base_sha)
 
-        commit_message = f"{jira_id} Update cascade workflow configuration"
+        commit_message = f"{jira_id} - Cascade workflow configuration"
 
         for filename in ("cascade-next-pr.yml", "cascade-conflict-check.yml"):
             rel_path = os.path.join(templates_dir, filename)
@@ -265,20 +264,33 @@ def sync_workflows_via_feature_branch(gh_repo, owner: str, repo: str, token: str
             target_path = f".github/workflows/{filename}"
             try:
                 existing = gh_repo.get_contents(target_path, ref=feature_branch)
-                gh_repo.update_file(path=target_path, message=commit_message, content=content, sha=existing.sha, branch=feature_branch)
-                updated.append(target_path)
+                current_content = existing.decoded_content.decode("utf-8")
+                if current_content != content:
+                    gh_repo.update_file(path=target_path, message=commit_message, content=content, sha=existing.sha, branch=feature_branch)
+                    updated.append(target_path)
             except Exception:
                 gh_repo.create_file(path=target_path, message=commit_message, content=content, branch=feature_branch)
                 created.append(target_path)
 
-        pr = gh_repo.create_pull(
-            title="Add/update cascade workflows",
-            body="Automated setup of cascade workflows.",
-            head=feature_branch,
-            base=default_branch,
-        )
+        if created or updated:
+            pr = gh_repo.create_pull(
+                title="Add/update cascade workflows",
+                body="Automated setup of cascade workflows.",
+                head=feature_branch,
+                base=default_branch,
+            )
+            pr_url = pr.html_url
+        else:
+            pr_url = None
 
-        status = "created" if created and not updated else "updated" if updated and not created else "partial"
+        if created and not updated:
+            status = "created"
+        elif updated and not created:
+            status = "updated"
+        elif created and updated:
+            status = "partial"
+        else:
+            status = "alreadyPresent"
 
         return StepResult(
             status=status,
@@ -287,7 +299,7 @@ def sync_workflows_via_feature_branch(gh_repo, owner: str, repo: str, token: str
                 "created": created,
                 "updated": updated,
                 "branch": feature_branch,
-                "pullRequestUrl": pr.html_url,
+                "pullRequestUrl": pr_url,
             },
         ).to_dict()
     except Exception as exc:  # noqa: BLE001
@@ -336,9 +348,6 @@ def process_repository(repo_cfg: Dict[str, Any], default_flags: Dict[str, str]) 
         else:
             result["steps"]["workflows"] = sync_workflows_via_feature_branch(
                 gh_repo=gh_repo,
-                owner=owner,
-                repo=repo,
-                token=token,
                 jira_id=jira_id.strip(),
                 templates_dir="templates/workflows",
             )
