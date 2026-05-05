@@ -77,7 +77,7 @@ def main() -> None:
                     row = {"repository": repo_name}
                     row.update({k: effective[k] for k in FLAG_KEYS})
                     rows.append(row)
-                st.dataframe(rows, use_container_width=True)
+                st.dataframe(rows, width="stretch")
 
     # --- Handle run (only if we have a parsed config) ---
     if run_clicked:
@@ -113,11 +113,11 @@ def main() -> None:
                             missing = step.get("missingLabels") or []
 
                             if created:
-                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;Created: {', '.join(created)}")
+                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp; **Created: ** {', '.join(created)}")
                             if existing:
-                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;Already existed: {', '.join(existing)}")
+                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp; **Already existed: ** {', '.join(existing)}")
                             if missing:
-                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;Missing (create manually): {', '.join(missing)}")
+                                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp; **Missing (create manually by referring to documentation): ** {', '.join(missing)}")
 
                         # Extra info for workflows PR
                         if step_name == "workflows" and step.get("pullRequestUrl"):
