@@ -39,18 +39,40 @@ jobs:
               return;
             }
 
-            const releaseRegex = /^release\/(?<app>[A-Za-z0-9._-]+)_(?<version>\d+\.\d{2})(?:[-_].*)?$/;
+            const releaseRegex = /^release\/(?<app>[A-Za-z0-9.-]+)_(?<version>\d{1,3}\.?\d{0,2}\.?\d{0,2})(?:[-_].*)?$/;
 
             function parseBranch(branch) {
               const match = branch.match(releaseRegex);
               if (!match) return null;
 
               const { app, version } = match.groups;
+
+              const parts = version.split('.'); // e.g. ["1"], ["1","2"], ["1","2","03"]
+
+              function toMinorOrPatchValue(str) {
+                if (str === undefined || str.length === 0) {
+                  return 0; // missing -> 0
+                }
+                if (str.length === 2) {
+                  // 2 digits: plain number, "02" -> 2, "99" -> 99
+                  return parseInt(str, 10);
+                }
+                // 1 digit: tens, "2" -> 20, "3" -> 30, etc.
+                const digit = parseInt(str, 10);
+                return digit * 10;
+              }
+
+              const major = parseInt(parts[0], 10);
+              const minor = toMinorOrPatchValue(parts[1]);
+              const patch = toMinorOrPatchValue(parts[2]);
+
+              const versionParts = [major, minor, patch];
+
               return {
                 branch,
                 app,
                 version,
-                versionParts: version.split('.').map(v => parseInt(v, 10))
+                versionParts
               };
             }
 
@@ -228,7 +250,7 @@ jobs:
                 base: nextBranch,
                 title,
                 body,
-                maintainer_can_modify: true
+                maintainer_can_modify: false
               });
             } catch (error) {
               if (error.status === 422) {
