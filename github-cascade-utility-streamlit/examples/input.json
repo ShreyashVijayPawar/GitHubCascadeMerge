@@ -1,16 +1,12 @@
 {
   "repositories": [
     {
-      "repository": "ShreyashVijayPawar/GitHubCascadeMerge",
+      "repository": "CitiInternal/172598.onb-vm-gbl.hnw-services",
       "patToken": "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"
     },
     {
-      "repository": "ShreyashVijayPawar/LockerProject",
-      "patToken": "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"
-    },
-    {
-      "repository": "ShreyashVijayPawar/FlyAway",
-      "patToken": "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"
+      "repository": "CitiInternal1/172598.icg.onboarding-services.hnw-services",
+      "patToken": "paste_your_token_here"
     }
   ]
 }
