@@ -16,25 +16,9 @@ REQUIRED_LABELS: Dict[str, Dict[str, str]] = {
         "color": "0e8a16",
         "description": "PR created by cascade workflow",
     },
-    "cascade-final-pr": {
-        "color": "5319e7",
-        "description": "Final cascade PR into non-release branch",
-    },
-    "cascade-conflict": {
+    "cascade-merge-conflicts": {
         "color": "b60205",
         "description": "Cascade PR has merge conflicts",
-    },
-    "cascade-blocked": {
-        "color": "d93f0b",
-        "description": "Cascade PR blocked by required checks or rules",
-    },
-    "cascade-unstable": {
-        "color": "f9d0c4",
-        "description": "Mergeability unstable after cascade polling",
-    },
-    "cascade-pending": {
-        "color": "c2e0c6",
-        "description": "Cascade PR mergeability still pending",
     },
     "cascade-manual-review": {
         "color": "fef2c0",
@@ -108,20 +92,36 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     for idx, repo_cfg in enumerate(repos):
         if not isinstance(repo_cfg, dict):
-            errors.append({"level": "repository", "repository": f"index {idx}", "message": "Repository entry must be an object."})
+            errors.append(
+                {"level": "repository", "repository": f"index {idx}", "message": "Repository entry must be an object."}
+            )
             continue
 
         repo_name = repo_cfg.get("repository")
         if not isinstance(repo_name, str) or repo_name.count("/") != 1:
-            errors.append({"level": "repository", "repository": repo_name, "message": "`repository` must be of form 'owner/name'."})
+            errors.append(
+                {"level": "repository", "repository": repo_name, "message": "`repository` must be of form 'owner/name'."}
+            )
 
         pat = repo_cfg.get("patToken")
         if not isinstance(pat, str) or not pat.strip():
-            errors.append({"level": "repository", "repository": repo_name, "message": "`patToken` is required and must be non-empty."})
+            errors.append(
+                {
+                    "level": "repository",
+                    "repository": repo_name,
+                    "message": "`patToken` is required and must be non-empty.",
+                }
+            )
 
         repo_flags = repo_cfg.get("setupFlags", {})
         if repo_flags and not isinstance(repo_flags, dict):
-            errors.append({"level": "repository", "repository": repo_name, "message": "`setupFlags` must be an object if present."})
+            errors.append(
+                {
+                    "level": "repository",
+                    "repository": repo_name,
+                    "message": "`setupFlags` must be an object if present.",
+                }
+            )
             repo_flags = {}
 
         effective = resolve_flags(default_flags, repo_flags)
@@ -129,11 +129,13 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
         if effective.get("createWorkflows", "Y") == "Y":
             jira_id = repo_cfg.get("jiraId")
             if not isinstance(jira_id, str) or not jira_id.strip():
-                errors.append({
-                    "level": "repository",
-                    "repository": repo_name,
-                    "message": "`jiraId` is required and must be non-empty when createWorkflows = 'Y'.",
-                })
+                errors.append(
+                    {
+                        "level": "repository",
+                        "repository": repo_name,
+                        "message": "`jiraId` is required and must be non-empty when createWorkflows = 'Y'.",
+                    }
+                )
 
     return errors
 

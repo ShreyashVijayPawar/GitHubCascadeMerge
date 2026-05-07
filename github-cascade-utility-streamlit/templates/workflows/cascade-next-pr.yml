@@ -263,7 +263,7 @@ jobs:
             const prNumber = createdPr.data.number;
             core.info(`Created cascade PR #${prNumber}`);
 
-            await addLabel(prNumber, isFinalMergeToDevelop ? 'cascade-final-pr' : 'cascade-pr');
+            await addLabel(prNumber, 'cascade-pr');
 
             let prDetails = await pollMergeability(prNumber, 10, 2000);
 
@@ -272,7 +272,7 @@ jobs:
             );
 
             if (prDetails?.mergeable === null || prDetails?.mergeable_state === 'unknown') {
-              await addLabel(prNumber, 'cascade-pending');
+              await addLabel(prNumber, 'cascade-manual-review');
               await addComment(
                 prNumber,
                 [
@@ -287,7 +287,7 @@ jobs:
             }
 
             if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
-              await addLabel(prNumber, 'cascade-conflict');
+              await addLabel(prNumber, 'cascade-merge-conflicts');
               await addComment(
                 prNumber,
                 [
@@ -309,7 +309,7 @@ jobs:
             }
 
             if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
-              await addLabel(prNumber, 'cascade-blocked');
+              await addLabel(prNumber, 'cascade-manual-review');
               await addComment(
                 prNumber,
                 [
@@ -344,7 +344,7 @@ jobs:
                 }
 
                 if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
-                  await addLabel(prNumber, 'cascade-conflict');
+                  await addLabel(prNumber, 'cascade-merge-conflicts');
                   await addComment(
                     prNumber,
                     [
@@ -361,7 +361,7 @@ jobs:
                 }
 
                 if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
-                  await addLabel(prNumber, 'cascade-blocked');
+                  await addLabel(prNumber, 'cascade-manual-review');
                   await addComment(
                     prNumber,
                     [
@@ -376,7 +376,7 @@ jobs:
                 }
               }
 
-              await addLabel(prNumber, 'cascade-unstable');
+              await addLabel(prNumber, 'cascade-manual-review');
               await addComment(
                 prNumber,
                 [
