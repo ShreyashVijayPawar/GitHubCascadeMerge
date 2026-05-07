@@ -190,17 +190,15 @@ jobs:
               return;
             }
 
-            let nextBranch;
-            let isFinalMergeToDevelop = false;
-
             if (currentIndex === eligibleBranches.length - 1) {
-              nextBranch = 'develop';
-              isFinalMergeToDevelop = true;
-              core.info(`Branch '${current.branch}' is the last eligible release branch. Final PR will be created to '${nextBranch}'.`);
-            } else {
-              nextBranch = eligibleBranches[currentIndex + 1].branch;
-              core.info(`Next cascade target branch: ${nextBranch}`);
+              core.info(
+                `Branch '${current.branch}' is the last eligible release branch. No further cascade PR will be created.`
+              );
+              return;
             }
+
+            const nextBranch = eligibleBranches[currentIndex + 1].branch;
+            core.info(`Next cascade target branch: ${nextBranch}`);
 
             const openPullRequests = await github.paginate(github.rest.pulls.list, {
               owner,
@@ -216,23 +214,17 @@ jobs:
               return;
             }
 
-            const title = isFinalMergeToDevelop
-              ? `[Cascade Final] ${current.branch} -> ${nextBranch}`
-              : `[Cascade] ${current.branch} -> ${nextBranch}`;
+            const title = `[Cascade] ${current.branch} -> ${nextBranch}`;
 
             const body = [
               `This PR was created automatically after PR #${mergedPrNumber} was merged into \`${current.branch}\`.`,
               ``,
               `### Cascade behavior`,
-              isFinalMergeToDevelop
-                ? `- This is the final cascade PR from the last eligible release branch into \`${nextBranch}\`.`
-                : `- Only the next downstream cascade PR is created.`,
+              `- Only the next downstream cascade PR is created.`,
               `- If this PR has conflicts, the cascade stops here.`,
               `- If this PR is immediately mergeable, it is merged automatically.`,
               `- If required branch conditions block merge, the PR remains open for review.`,
-              isFinalMergeToDevelop
-                ? `- Once this PR is merged, the release cascade is complete.`
-                : `- Once this PR is merged, the next downstream cascade PR can be created automatically.`,
+              `- Once this PR is merged, the next downstream cascade PR can be created automatically.`,
               ``,
               `### Details`,
               `- App: \`${current.app}\``,
@@ -254,7 +246,9 @@ jobs:
               });
             } catch (error) {
               if (error.status === 422) {
-                core.warning(`Cascade PR was not created. This may mean there is no diff or an equivalent PR already exists. ${error.message}`);
+                core.warning(
+                  `Cascade PR was not created. This may mean there is no diff or an equivalent PR already exists. ${error.message}`
+                );
                 return;
               }
               throw error;
@@ -286,6 +280,7 @@ jobs:
               return;
             }
 
+            // Conflicts / non-mergeable -> cascade-merge-conflicts
             if (prDetails?.mergeable === false || prDetails?.mergeable_state === 'dirty') {
               await addLabel(prNumber, 'cascade-merge-conflicts');
               await addComment(
@@ -293,21 +288,21 @@ jobs:
                 [
                   `This cascade PR currently has merge conflicts or is not mergeable.`,
                   ``,
-                  isFinalMergeToDevelop
-                    ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
-                    : `The cascade stops here until this PR is resolved and merged.`
+                  `The cascade stops here until this PR is resolved and merged.`
                 ].join('\n')
               );
               core.info(`PR #${prNumber} is not mergeable. Cascade stops here.`);
               return;
             }
 
+            // Clean -> auto-merge
             if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'clean') {
               await mergePullRequest(prNumber);
               core.info(`PR #${prNumber} was merged immediately because it is in clean state.`);
               return;
             }
 
+            // Blocked -> cascade-manual-review
             if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'blocked') {
               await addLabel(prNumber, 'cascade-manual-review');
               await addComment(
@@ -323,6 +318,7 @@ jobs:
               return;
             }
 
+            // Unstable -> extended retries; if still unresolved, cascade-manual-review
             if (prDetails?.mergeable === true && prDetails?.mergeable_state === 'unstable') {
               const unstableMaxAttempts = 12;
               const unstableDelayMs = 10000;
@@ -350,9 +346,7 @@ jobs:
                     [
                       `This cascade PR became non-mergeable while waiting for unstable state to resolve.`,
                       ``,
-                      isFinalMergeToDevelop
-                        ? `The final merge into \`${nextBranch}\` is paused until this PR is resolved and merged.`
-                        : `The cascade stops here until this PR is resolved and merged.`,
+                      `The cascade stops here until this PR is resolved and merged.`,
                       `Observed state: mergeable=\`${prDetails?.mergeable}\`, mergeable_state=\`${prDetails?.mergeable_state}\`.`
                     ].join('\n')
                   );
@@ -390,6 +384,7 @@ jobs:
               return;
             }
 
+            // Fallback: any other unhandled state -> cascade-manual-review
             await addLabel(prNumber, 'cascade-manual-review');
             await addComment(
               prNumber,
