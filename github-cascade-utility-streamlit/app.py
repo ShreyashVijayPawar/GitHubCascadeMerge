@@ -20,7 +20,7 @@ def main() -> None:
         """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
     )
 
-    st.subheader("1. Configuration JSON")
+    st.subheader("Configuration JSON")
 
     default_config_text = load_default_config_text()
     config_text = st.text_area(
