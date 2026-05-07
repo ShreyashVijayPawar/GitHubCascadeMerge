@@ -36,88 +36,70 @@ def main() -> None:
         help="Configuration includes a `repositories` list with `repository` and `patToken` fields.",
     )
 
-    # --- Parse config every run (if possible) ---
-    config = None
-    parse_error = None
-    if config_text.strip():
+    # Single button: validate + run
+    run_clicked = st.button("Run setup & propagate")
+
+    if run_clicked:
+        # Basic presence check
+        if not config_text.strip():
+            st.error("Configuration JSON is required.")
+            return
+
+        # Parse JSON
         try:
             config = parse_config(config_text)
         except Exception as exc:  # noqa: BLE001
-            parse_error = str(exc)
+            st.error(f"Failed to parse JSON: {exc}")
+            return
 
-    # --- Buttons side by side ---
-    col1, col2 = st.columns(2)
-    validate_clicked = col1.button("Validate configuration")
-    run_clicked = col2.button("Run setup & propagate")
+        # Validate config
+        errors = validate_config(config)
+        if errors:
+            st.error("Configuration has validation errors:")
+            for err in errors:
+                repo = err.get("repository") or "(global)"
+                st.write(f"- **{repo}**: {err['message']}")
+            return
 
-    # --- Handle validation ---
-    if validate_clicked:
-        if not config_text.strip():
-            st.error("Configuration JSON is required.")
-        elif parse_error:
-            st.error(f"Failed to parse JSON: {parse_error}")
-        else:
-            errors = validate_config(config)
-            if errors:
-                st.error("Configuration has validation errors:")
-                for err in errors:
-                    repo = err.get("repository") or "(global)"
-                    st.write(f"- **{repo}**: {err['message']}")
-            else:
-                st.success("Configuration is valid.")
+        # If validation passes, run setup
+        with st.spinner("Running setup across repositories..."):
+            results = run_all(config)
 
-    # --- Handle run (only if we have a parsed config) ---
-    if run_clicked:
-        if not config_text.strip():
-            st.error("Configuration JSON is required before running.")
-        elif parse_error:
-            st.error(f"Cannot run because JSON fails to parse: {parse_error}")
-        else:
-            errors = validate_config(config)
-            if errors:
-                st.error("Configuration has validation errors; please fix and validate first.")
-                for err in errors:
-                    repo = err.get("repository") or "(global)"
-                    st.write(f"- **{repo}**: {err['message']}")
-            else:
-                with st.spinner("Running setup across repositories..."):
-                    results = run_all(config)
+        st.subheader("Results")
+        for res in results:
+            st.markdown(f"### Repository: `{res['repository']}`")
+            steps = res.get("steps", {})
 
-                st.subheader("Results")
-                for res in results:
-                    st.markdown(f"### Repository: `{res['repository']}`")
-                    steps = res.get("steps", {})
+            for step_name in ["labels", "secret", "enableAutoMerge", "workflows"]:
+                step = steps.get(step_name, {})
+                status = step.get("status")
+                st.write(f"**{step_name}**: `{status}`")
 
-                    for step_name in ["labels", "secret", "enableAutoMerge", "workflows"]:
-                        step = steps.get(step_name, {})
-                        status = step.get("status")
-                        st.write(f"**{step_name}**: `{status}`")
+                # Extra indentation for labels
+                if step_name == "labels":
+                    created = step.get("createdLabels") or []
+                    existing = step.get("existingLabels") or []
+                    missing = step.get("missingLabels") or []
 
-                        # Extra indentation for labels
-                        if step_name == "labels":
-                            created = step.get("createdLabels") or []
-                            existing = step.get("existingLabels") or []
-                            missing = step.get("missingLabels") or []
+                    if created:
+                        st.write(f"  **Created:** {', '.join(created)}")
+                    if existing:
+                        st.write(f"  **Already existed:** {', '.join(existing)}")
+                    if missing:
+                        st.write(
+                            f"  **Missing (create manually by referring to documentation):** {', '.join(missing)}"
+                        )
 
-                            if created:
-                                st.write(f"  **Created:** {', '.join(created)}")
-                            if existing:
-                                st.write(f"  **Already existed:** {', '.join(existing)}")
-                            if missing:
-                                st.write(
-                                    f"  **Missing (create manually by referring to documentation):** {', '.join(missing)}"
-                                )
+                # Extra info for workflows PR
+                if step_name == "workflows" and step.get("pullRequestUrl"):
+                    st.write(f"  PR: {step['pullRequestUrl']}")
 
-                        # Extra info for workflows PR
-                        if step_name == "workflows" and step.get("pullRequestUrl"):
-                            st.write(f"  PR: {step['pullRequestUrl']}")
-
-                        failed = step.get("failed")
-                        manual_doc = step.get("manualDoc")
-                        if failed:
-                            st.warning(f"- Error: {failed}")
-                        if manual_doc and status == "failed":
-                            st.info(f"- See `{manual_doc}` for manual steps.")
+                failed = step.get("failed")
+                manual_doc = step.get("manualDoc")
+                if failed:
+                    st.warning(f"- Error: {failed}")
+                if manual_doc and status == "failed":
+                    st.info(f"- See `{manual_doc}` for manual steps.")
 
 
 if __name__ == "__main__":
