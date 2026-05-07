@@ -1,8 +1,8 @@
 {
   "repositories": [
     {
-      "repository": "owner/service-a",
-      "patToken": "ghp_your_token_here"
+      "repository": "CitiInternal/172598.onb-vm-gbl.hnw-services",
+      "patToken": "paste_your_token_here"
     }
   ]
 }

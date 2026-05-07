@@ -17,16 +17,10 @@ def main() -> None:
     st.title("Cascade Workflow Bootstrapper")
 
     st.markdown(
-        """This utility bootstraps repositories for the cascade merge workflow by:
-
-- Ensuring standard cascade labels exist.
-- Creating the `CASCADE_GITHUB_TOKEN` secret if missing.
-- Enabling repository-level auto-merge.
-- Creating a feature branch, updating workflow files, and opening a PR.
-"""
+        """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
     )
 
-    st.subheader("1. Configuration JSON")
+    st.subheader("Configuration JSON")
 
     default_config_text = load_default_config_text()
     config_text = st.text_area(

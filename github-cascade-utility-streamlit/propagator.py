@@ -77,7 +77,7 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
         repo_name = repo_cfg.get("repository")
         if not isinstance(repo_name, str) or repo_name.count("/") != 1:
             errors.append(
-                {"level": "repository", "repository": repo_name, "message": "`repository` must be of form 'owner/name'."}
+                {"level": "repository", "repository": repo_name, "message": "`repository` must be of form '<owner>/<repo-name>' (e.g. CitiInternal/172598.icg.onboarding-services.hnw-services)."}
             )
 
         pat = repo_cfg.get("patToken")
