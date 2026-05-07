@@ -9,7 +9,7 @@ from datetime import datetime, UTC
 import os
 
 # Hardcoded JIRA ID reused for all repositories
-JIRA_ID = "ABC-1234"  # TODO: replace with your real JIRA id
+JIRA_ID = "CWS-1234"  # keep as agreed
 
 REQUIRED_LABELS: Dict[str, Dict[str, str]] = {
     "cascade-pr": {
@@ -56,6 +56,19 @@ def parse_config(raw_json: str) -> Dict[str, Any]:
 
 
 def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Validate that config has the minimal required shape:
+
+    {
+      "repositories": [
+        {
+          "repository": "owner/name",
+          "patToken": "ghp_xxx"
+        },
+        ...
+      ]
+    }
+    """
     errors: List[Dict[str, Any]] = []
 
     if not isinstance(config, dict):
@@ -77,7 +90,7 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
         repo_name = repo_cfg.get("repository")
         if not isinstance(repo_name, str) or repo_name.count("/") != 1:
             errors.append(
-                {"level": "repository", "repository": repo_name, "message": "`repository` must be of form '<owner>/<repo-name>' (e.g. CitiInternal/172598.icg.onboarding-services.hnw-services)."}
+                {"level": "repository", "repository": repo_name, "message": "`repository` must be of form 'owner/name'."}
             )
 
         pat = repo_cfg.get("patToken")
@@ -252,8 +265,10 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
 
         pr = None
         pr_url: Optional[str] = None
+        pr_state: Optional[str] = None  # "OPEN" or "CLOSED"
 
         if created or updated:
+            # Create PR from feature branch into default branch
             pr = gh_repo.create_pull(
                 title="Add/update cascade workflows",
                 body="Automated setup of cascade workflows.",
@@ -261,13 +276,34 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                 base=default_branch,
             )
             pr_url = pr.html_url
+            pr_state = "OPEN"
+
+            # Poll up to 5 times (2s interval) for mergeability to settle
+            import time
+
+            max_attempts = 5
+            delay_seconds = 2
+
+            for attempt in range(1, max_attempts + 1):
+                pr = gh_repo.get_pull(pr.number)  # refresh
+                if pr.mergeable is not None and pr.mergeable_state != "unknown":
+                    break
+                if attempt < max_attempts:
+                    time.sleep(delay_seconds)
 
             # Try to auto-merge the PR if it's cleanly mergeable
             try:
-                pr = gh_repo.get_pull(pr.number)  # refresh with mergeability info
                 if pr.mergeable and pr.mergeable_state == "clean":
-                    pr.merge(merge_method="merge")
-                # if it's not clean (blocked, dirty, unknown), leave it open for manual review
+                    merge_result = pr.merge(merge_method="merge")
+                    # PyGithub merge returns a dict-like object
+                    merged_flag = False
+                    if isinstance(merge_result, dict):
+                        merged_flag = merge_result.get("merged", False)
+                    else:
+                        merged_flag = getattr(merge_result, "merged", False)
+                    pr_state = "CLOSED" if merged_flag else "OPEN"
+                else:
+                    pr_state = "OPEN"
             except Exception as merge_exc:  # noqa: BLE001
                 # Auto-merge is best-effort; record the error but don't fail the whole step
                 return StepResult(
@@ -279,10 +315,13 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                         "updated": updated,
                         "branch": feature_branch,
                         "pullRequestUrl": pr_url,
+                        "pullRequestState": pr_state or "OPEN",
                     },
                 ).to_dict()
         else:
+            # Nothing changed, no PR needed
             pr_url = None
+            pr_state = None
 
         if created and not updated:
             status = "created"
@@ -301,6 +340,7 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                 "updated": updated,
                 "branch": feature_branch,
                 "pullRequestUrl": pr_url,
+                "pullRequestState": pr_state,
             },
         ).to_dict()
     except Exception as exc:  # noqa: BLE001

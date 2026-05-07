@@ -20,7 +20,7 @@ def main() -> None:
         """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
     )
 
-    st.subheader("Configuration JSON")
+    st.subheader("1. Configuration JSON")
 
     default_config_text = load_default_config_text()
     config_text = st.text_area(
@@ -59,41 +59,112 @@ def main() -> None:
         with st.spinner("Running setup across repositories..."):
             results = run_all(config)
 
-        st.subheader("Results")
+        # Build table rows
+        table_rows = []
         for res in results:
-            st.markdown(f"### Repository: `{res['repository']}`")
+            repo_name = res.get("repository")
             steps = res.get("steps", {})
 
-            for step_name in ["labels", "secret", "enableAutoMerge", "workflows"]:
-                step = steps.get(step_name, {})
-                status = step.get("status")
-                st.write(f"**{step_name}**: `{status}`")
+            # ----- Labels column -----
+            labels_step = steps.get("labels", {})
+            created = labels_step.get("createdLabels") or []
+            existing = labels_step.get("existingLabels") or []
+            missing = labels_step.get("missingLabels") or []
 
-                # Extra indentation for labels
-                if step_name == "labels":
-                    created = step.get("createdLabels") or []
-                    existing = step.get("existingLabels") or []
-                    missing = step.get("missingLabels") or []
+            label_lines = []
 
-                    if created:
-                        st.write(f"  **Created:** {', '.join(created)}")
-                    if existing:
-                        st.write(f"  **Already existed:** {', '.join(existing)}")
-                    if missing:
-                        st.write(
-                            f"  **Missing (create manually by referring to documentation):** {', '.join(missing)}"
-                        )
+            if created:
+                label_lines.append("**created**: " + ", ".join(created))
+            if existing:
+                label_lines.append("**existed**: " + ", ".join(existing))
 
-                # Extra info for workflows PR
-                if step_name == "workflows" and step.get("pullRequestUrl"):
-                    st.write(f"  PR: {step['pullRequestUrl']}")
+            if missing or labels_step.get("status") == "failed":
+                failed_values = missing if missing else []
+                failed_str = ", ".join(failed_values) if failed_values else "unknown"
+                label_lines.append(f"**failed**: {failed_str}")
 
-                failed = step.get("failed")
-                manual_doc = step.get("manualDoc")
-                if failed:
-                    st.warning(f"- Error: {failed}")
-                if manual_doc and status == "failed":
-                    st.info(f"- See `{manual_doc}` for manual steps.")
+            labels_cell = "<br>".join(label_lines) if label_lines else "-"
+
+            # ----- Repository secret column -----
+            secret_step = steps.get("secret", {})
+            secret_status = secret_step.get("status")
+            if secret_status == "failed":
+                secret_cell = "FAILED"
+            else:
+                secret_cell = "SUCCESS"
+
+            # ----- Enable Auto-Merge column -----
+            auto_step = steps.get("enableAutoMerge", {})
+            auto_status = auto_step.get("status")
+            if auto_status == "failed":
+                auto_cell = "FAILED"
+            else:
+                auto_cell = "SUCCESS"
+
+            # ----- Workflow code column -----
+            workflows_step = steps.get("workflows", {})
+            wf_status = workflows_step.get("status")
+            wf_url = workflows_step.get("pullRequestUrl")
+            wf_state = workflows_step.get("pullRequestState")
+
+            if wf_url and wf_state:
+                wf_cell = f"PR [{wf_state}] = {wf_url}"
+            elif wf_url:
+                wf_cell = f"PR [OPEN] = {wf_url}"
+            elif wf_status == "failed":
+                wf_cell = "FAILED"
+            else:
+                wf_cell = "NA"
+
+            table_rows.append(
+                {
+                    "Repository": repo_name,
+                    "Labels": labels_cell,
+                    "Repository secret": secret_cell,
+                    "Enable Auto-Merge": auto_cell,
+                    "Workflow code": wf_cell,
+                }
+            )
+
+        st.subheader("Results")
+
+        # 1) Inject CSS for smaller font on markdown tables
+        st.markdown(
+            """
+<style>
+table {
+    font-size: 0.9rem;
+}
+</style>
+""",
+            unsafe_allow_html=True,
+        )
+
+        # 2) Render table as pure markdown so Streamlit formats it correctly
+        if table_rows:
+            headers = [
+                "Repository",
+                "Labels (failed \u2192 Docs/manual-create-labels.md)",
+                "Repository secret (failed \u2192 Docs/manual-create-secret.md)",
+                "Enable Auto-Merge (failed \u2192 Docs/manual-enable-auto-merge.md)",
+                "Workflow code (failed \u2192 Docs/manual-setup-workflows.md)",
+            ]
+            header_line = "| " + " | ".join(headers) + " |"
+            sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
+
+            lines = [header_line, sep_line]
+            for row in table_rows:
+                line_cells = [
+                    str(row["Repository"] or ""),
+                    str(row["Labels"] or ""),
+                    str(row["Repository secret"] or ""),
+                    str(row["Enable Auto-Merge"] or ""),
+                    str(row["Workflow code"] or ""),
+                ]
+                lines.append("| " + " | ".join(line_cells) + " |")
+
+            md_table = "\n".join(lines)
+            st.markdown(md_table, unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
