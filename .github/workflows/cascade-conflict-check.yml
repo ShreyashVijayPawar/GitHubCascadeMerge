@@ -52,7 +52,7 @@ jobs:
                   owner,
                   repo,
                   issue_number: prNumber,
-                  labels: ['cascade-conflict']
+                  labels: ['cascade-merge-conflicts']
                 });
               } catch (e) {
                 core.warning(`Could not add conflict label. ${e.message}`);
