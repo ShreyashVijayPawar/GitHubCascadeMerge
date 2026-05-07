@@ -8,8 +8,8 @@ from nacl import encoding, public
 from datetime import datetime, UTC
 import os
 
-FLAG_KEYS = ["createLabels", "createSecret", "enableAutoMerge", "createWorkflows"]
-DEFAULT_FLAG_VALUE = "Y"
+# Hardcoded JIRA ID reused for all repositories
+JIRA_ID = "ABC-1234"  # TODO: replace with your real JIRA id
 
 REQUIRED_LABELS: Dict[str, Dict[str, str]] = {
     "cascade-pr": {
@@ -51,27 +51,6 @@ class StepResult:
         return data
 
 
-def _normalize_flag(value: Optional[str]) -> str:
-    if value is None:
-        return DEFAULT_FLAG_VALUE
-    v = value.strip().upper()
-    return v if v in ("Y", "N") else DEFAULT_FLAG_VALUE
-
-
-def resolve_flags(default_flags: Optional[Dict[str, str]], repo_flags: Optional[Dict[str, str]]) -> Dict[str, str]:
-    default_flags = default_flags or {}
-    repo_flags = repo_flags or {}
-    effective: Dict[str, str] = {}
-    for key in FLAG_KEYS:
-        if key in repo_flags:
-            effective[key] = _normalize_flag(repo_flags[key])
-        elif key in default_flags:
-            effective[key] = _normalize_flag(default_flags[key])
-        else:
-            effective[key] = DEFAULT_FLAG_VALUE
-    return effective
-
-
 def parse_config(raw_json: str) -> Dict[str, Any]:
     return json.loads(raw_json)
 
@@ -87,8 +66,6 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not isinstance(repos, list) or not repos:
         errors.append({"level": "global", "repository": None, "message": "`repositories` must be a non-empty list."})
         return errors
-
-    default_flags = config.get("defaultSetupFlags", {})
 
     for idx, repo_cfg in enumerate(repos):
         if not isinstance(repo_cfg, dict):
@@ -112,30 +89,6 @@ def validate_config(config: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "message": "`patToken` is required and must be non-empty.",
                 }
             )
-
-        repo_flags = repo_cfg.get("setupFlags", {})
-        if repo_flags and not isinstance(repo_flags, dict):
-            errors.append(
-                {
-                    "level": "repository",
-                    "repository": repo_name,
-                    "message": "`setupFlags` must be an object if present.",
-                }
-            )
-            repo_flags = {}
-
-        effective = resolve_flags(default_flags, repo_flags)
-
-        if effective.get("createWorkflows", "Y") == "Y":
-            jira_id = repo_cfg.get("jiraId")
-            if not isinstance(jira_id, str) or not jira_id.strip():
-                errors.append(
-                    {
-                        "level": "repository",
-                        "repository": repo_name,
-                        "message": "`jiraId` is required and must be non-empty when createWorkflows = 'Y'.",
-                    }
-                )
 
     return errors
 
@@ -214,17 +167,29 @@ def ensure_cascade_secret(owner: str, repo: str, pat: str, cascade_token: str) -
         if r.status_code == 200:
             return StepResult(status="alreadyPresent", manualDoc=HELP_DOCS["secrets"]).to_dict()
         if r.status_code not in (404,):
-            return StepResult(status="failed", failed=f"Unexpected status when checking secret: {r.status_code} {r.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+            return StepResult(
+                status="failed",
+                failed=f"Unexpected status when checking secret: {r.status_code} {r.text}",
+                manualDoc=HELP_DOCS["secrets"],
+            ).to_dict()
 
         r_pk = requests.get(f"{base}/public-key", headers=headers, timeout=10)
         if r_pk.status_code != 200:
-            return StepResult(status="failed", failed=f"Failed to get public key: {r_pk.status_code} {r_pk.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+            return StepResult(
+                status="failed",
+                failed=f"Failed to get public key: {r_pk.status_code} {r_pk.text}",
+                manualDoc=HELP_DOCS["secrets"],
+            ).to_dict()
         data = r_pk.json()
         encrypted = _encrypt_secret(data["key"], cascade_token)
         put_body = {"encrypted_value": encrypted, "key_id": data["key_id"]}
         r_put = requests.put(f"{base}/CASCADE_GITHUB_TOKEN", headers=headers, json=put_body, timeout=10)
         if r_put.status_code not in (201, 204):
-            return StepResult(status="failed", failed=f"Failed to create secret: {r_put.status_code} {r_put.text}", manualDoc=HELP_DOCS["secrets"]).to_dict()
+            return StepResult(
+                status="failed",
+                failed=f"Failed to create secret: {r_put.status_code} {r_put.text}",
+                manualDoc=HELP_DOCS["secrets"],
+            ).to_dict()
         return StepResult(status="created", manualDoc=HELP_DOCS["secrets"]).to_dict()
     except Exception as exc:  # noqa: BLE001
         return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["secrets"]).to_dict()
@@ -268,10 +233,21 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                 existing = gh_repo.get_contents(target_path, ref=feature_branch)
                 current_content = existing.decoded_content.decode("utf-8")
                 if current_content != content:
-                    gh_repo.update_file(path=target_path, message=commit_message, content=content, sha=existing.sha, branch=feature_branch)
+                    gh_repo.update_file(
+                        path=target_path,
+                        message=commit_message,
+                        content=content,
+                        sha=existing.sha,
+                        branch=feature_branch,
+                    )
                     updated.append(target_path)
             except Exception:
-                gh_repo.create_file(path=target_path, message=commit_message, content=content, branch=feature_branch)
+                gh_repo.create_file(
+                    path=target_path,
+                    message=commit_message,
+                    content=content,
+                    branch=feature_branch,
+                )
                 created.append(target_path)
 
         if created or updated:
@@ -308,74 +284,55 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
         return StepResult(status="failed", failed=str(exc), manualDoc=HELP_DOCS["workflows"]).to_dict()
 
 
-def process_repository(repo_cfg: Dict[str, Any], default_flags: Dict[str, str]) -> Dict[str, Any]:
+def process_repository(repo_cfg: Dict[str, Any]) -> Dict[str, Any]:
     repo_name = repo_cfg["repository"]
     owner, repo = repo_name.split("/", 1)
     token = repo_cfg["patToken"].strip()
-    jira_id = repo_cfg.get("jiraId")
-
-    flags = resolve_flags(default_flags, repo_cfg.get("setupFlags"))
 
     gh = Github(token)
     gh_repo = gh.get_repo(f"{owner}/{repo}")
 
     result: Dict[str, Any] = {
         "repository": repo_name,
-        "flags": flags,
         "steps": {},
     }
 
-    if flags["createLabels"] == "Y":
-        result["steps"]["labels"] = ensure_labels(gh_repo)
-    else:
-        result["steps"]["labels"] = StepResult(status="skippedByFlag").to_dict()
+    # Always ensure labels
+    result["steps"]["labels"] = ensure_labels(gh_repo)
 
-    if flags["createSecret"] == "Y":
-        result["steps"]["secret"] = ensure_cascade_secret(owner, repo, token, token)
-    else:
-        result["steps"]["secret"] = StepResult(status="skippedByFlag").to_dict()
+    # Always ensure CASCADE_GITHUB_TOKEN secret using the same PAT
+    result["steps"]["secret"] = ensure_cascade_secret(owner, repo, token, token)
 
-    if flags["enableAutoMerge"] == "Y":
-        result["steps"]["enableAutoMerge"] = ensure_auto_merge_enabled(gh_repo)
-    else:
-        result["steps"]["enableAutoMerge"] = StepResult(status="skippedByFlag").to_dict()
+    # Always enable auto-merge
+    result["steps"]["enableAutoMerge"] = ensure_auto_merge_enabled(gh_repo)
 
-    if flags["createWorkflows"] == "Y":
-        if not isinstance(jira_id, str) or not jira_id.strip():
-            result["steps"]["workflows"] = StepResult(
-                status="failed",
-                failed="`jiraId` is required and must be non-empty when createWorkflows = 'Y' for this repository.",
-                manualDoc=HELP_DOCS["workflows"],
-            ).to_dict()
-        else:
-            result["steps"]["workflows"] = sync_workflows_via_feature_branch(
-                gh_repo=gh_repo,
-                jira_id=jira_id.strip(),
-                templates_dir="templates/workflows",
-            )
-    else:
-        result["steps"]["workflows"] = StepResult(status="skippedByFlag").to_dict()
+    # Always sync workflows using hardcoded JIRA_ID
+    result["steps"]["workflows"] = sync_workflows_via_feature_branch(
+        gh_repo=gh_repo,
+        jira_id=JIRA_ID,
+        templates_dir="templates/workflows",
+    )
 
     return result
 
 
 def run_all(config: Dict[str, Any]) -> List[Dict[str, Any]]:
-    default_flags = config.get("defaultSetupFlags", {})
     repos = config.get("repositories", [])
     results: List[Dict[str, Any]] = []
     for repo_cfg in repos:
         try:
-            results.append(process_repository(repo_cfg, default_flags))
+            results.append(process_repository(repo_cfg))
         except Exception as exc:  # noqa: BLE001
             repo_name = repo_cfg.get("repository")
-            results.append({
-                "repository": repo_name,
-                "flags": resolve_flags(default_flags, repo_cfg.get("setupFlags")),
-                "steps": {
-                    "labels": StepResult(status="failed", failed=str(exc)).to_dict(),
-                    "secret": StepResult(status="failed", failed=str(exc)).to_dict(),
-                    "enableAutoMerge": StepResult(status="failed", failed=str(exc)).to_dict(),
-                    "workflows": StepResult(status="failed", failed=str(exc)).to_dict(),
-                },
-            })
+            results.append(
+                {
+                    "repository": repo_name,
+                    "steps": {
+                        "labels": StepResult(status="failed", failed=str(exc)).to_dict(),
+                        "secret": StepResult(status="failed", failed=str(exc)).to_dict(),
+                        "enableAutoMerge": StepResult(status="failed", failed=str(exc)).to_dict(),
+                        "workflows": StepResult(status="failed", failed=str(exc)).to_dict(),
+                    },
+                }
+            )
     return results

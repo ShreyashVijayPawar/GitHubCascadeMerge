@@ -1,15 +1,8 @@
 {
-  "defaultSetupFlags": {
-    "createLabels": "Y",
-    "createSecret": "Y",
-    "enableAutoMerge": "Y",
-    "createWorkflows": "Y"
-  },
   "repositories": [
     {
       "repository": "owner/service-a",
-      "patToken": "ghp_your_token_here",
-      "jiraId": "ABC-123"
+      "patToken": "ghp_your_token_here"
     }
   ]
 }
