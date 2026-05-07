@@ -250,6 +250,9 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                 )
                 created.append(target_path)
 
+        pr = None
+        pr_url: Optional[str] = None
+
         if created or updated:
             pr = gh_repo.create_pull(
                 title="Add/update cascade workflows",
@@ -258,6 +261,26 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                 base=default_branch,
             )
             pr_url = pr.html_url
+
+            # Try to auto-merge the PR if it's cleanly mergeable
+            try:
+                pr = gh_repo.get_pull(pr.number)  # refresh with mergeability info
+                if pr.mergeable and pr.mergeable_state == "clean":
+                    pr.merge(merge_method="merge")
+                # if it's not clean (blocked, dirty, unknown), leave it open for manual review
+            except Exception as merge_exc:  # noqa: BLE001
+                # Auto-merge is best-effort; record the error but don't fail the whole step
+                return StepResult(
+                    status="partial",
+                    manualDoc=HELP_DOCS["workflows"],
+                    failed=f"PR created but auto-merge failed: {merge_exc}",
+                    details={
+                        "created": created,
+                        "updated": updated,
+                        "branch": feature_branch,
+                        "pullRequestUrl": pr_url,
+                    },
+                ).to_dict()
         else:
             pr_url = None
 
