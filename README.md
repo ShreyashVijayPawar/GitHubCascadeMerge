@@ -1,6 +1,6 @@
 # GitHub Cascade Workflow Propagation Utility
 
-This utility provides a local Streamlit UI to propagate workflow files into multiple GitHub repositories.
+This utility provides a local Streamlit UI to propagate workflow files into multiple GitHub repositories...
 
 ## Features
 - JSON input for multiple repositories
