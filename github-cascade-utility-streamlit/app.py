@@ -16,43 +16,38 @@ def main() -> None:
     st.set_page_config(page_title="Cascade Workflow Bootstrapper", layout="wide")
     st.title("Cascade Workflow Bootstrapper")
 
-    # Top description + User Guide button
-    col_main, col_guide = st.columns([4, 1])
-    with col_main:
-        st.markdown(
-            """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
-        )
-    with col_guide:
-        show_guide = st.button("User Guide")
-
-    if show_guide:
-        guide_path = Path("Docs/manual-setup-workflows.md")
-        if guide_path.exists():
-            guide_text = guide_path.read_text(encoding="utf-8")
-            with st.expander("Cascade Merge – User Guide", expanded=True):
-                st.markdown(guide_text, unsafe_allow_html=True)
-        else:
-            st.warning("User guide file Docs/setup-guide-for-cascade-merge.md not found.")
+    # Simple description only (no User Guide button)
+    st.markdown(
+        "Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."
+    )
 
     st.subheader("Configuration JSON")
+
+    # Input rules shown above the textbox on page load
+    st.markdown(
+        """
+**Input configuration rules:**
+
+- Must be valid JSON with a top-level `repositories` array.  
+- Each item in `repositories` must be a JSON object.  
+- Every object must have `repository: "owner/name"` (e.g. `CitInternal/172598.onb-vm-gbl.hnw-services`).  
+- Every object must have a non-empty `patToken` string using a GitHub PAT that:
+  - Has rights to manage labels, secrets, auto-merge, and PRs, and  
+  - Has no expiration, so it can be used continuously by the cascade-merge workflow.
+"""
+    )
 
     default_config_text = load_default_config_text()
     config_text = st.text_area(
         "Paste configuration JSON here",
         value=default_config_text,
         height=260,
-        placeholder=(
-            "Each repository must include a patToken with:\n"
-            "- No expiration\n"
-            "- Repo permissions: contents:write, pull_requests:write, issues:write, administration:write\n"
-            "See the User Guide (top right) for a full JSON example."
-        ),
         help=(
             "Configuration includes a `repositories` list with `repository` and `patToken` fields. "
             "Use a PAT with no expiration and sufficient repo/admin scopes so labels, secrets, "
             "auto-merge, and PRs can be created."
         ),
-    )  # [file:1572][file:1454]
+    )
 
     # Single button: validate + run
     run_clicked = st.button("Run setup & propagate")
@@ -152,7 +147,7 @@ def main() -> None:
 
         st.subheader("Results")
 
-        # 1) Inject CSS for smaller font on markdown tables
+        # Make markdown table text a bit smaller
         st.markdown(
             """
 <style>
@@ -164,15 +159,14 @@ table {
             unsafe_allow_html=True,
         )
 
-        # 2) Render table as pure markdown so Streamlit formats it correctly,
-        #    with headers having second-line clickable manual doc links.
+        # Render table as markdown with linked headers
         if table_rows:
             headers = [
                 "Repository",
                 "Labels Required for Cascading<br>[manual-create-labels](Docs/manual-create-labels.md)",
                 "Repository secret for Cascading<br>[manual-create-secret](Docs/manual-create-secret.md)",
                 "Enable Auto-Merge for Cascading<br>[manual-enable-auto-merge](Docs/manual-enable-auto-merge.md)",
-                "Workflow Code Enabled for Cascading<br>[manual-setup-workflows](Docs/manual-setup-workflows.md)",
+                "Workflow Enabled for Cascading<br>[manual-setup-workflows](Docs/manual-setup-workflows.md)",
             ]
             header_line = "| " + " | ".join(headers) + " |"
             sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"
