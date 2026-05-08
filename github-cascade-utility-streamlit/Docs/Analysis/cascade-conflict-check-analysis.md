@@ -1,11 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# Let's go ahead with understanding cascade-conflict-check.yml file.
-
-Explain line by line what each line does....
-
-Here’s `cascade-conflict-check.yml` line by line, focusing on the YAML and what the JS is doing conceptually.[^1]
-
 ```yaml
 name: Cascade Conflict Check
 ```

@@ -1,22 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# provide me in three responses
-
-line 1-150
-line 151 - 272
-line 272 - end of the file (too much detailed explanation is not required)
-
-You asked for three responses, with the first covering roughly “lines 1–150”. The YAML doesn’t literally show line numbers here, but I’ll treat this first response as:
-
-- From the top of the file
-- Down through:
-    - Workflow header and trigger
-    - Job/step setup
-    - All helper functions (`parseBranch`, `compareVersionOnly`, `sleep`, `getPullRequest`, `pollMergeability`, `addLabel`, `addComment`, `mergePullRequest`)
-    - Parsing the current branch and building `eligibleBranches`
-
-I’ll keep explanations precise but not over‑verbose, and use small examples. Then next responses will cover the later parts.
-
 ***
 
 ## 1. Workflow header and trigger

@@ -1,13 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# i think you have missed few steps -
-
-1. we did setup ruleset for release/* branches
-2. we added some labels under issues section
-
-Can you revisit all the steps from scratch and provide end-to-end step by step guide for implementation along with the files
-
-Yes — you were right. For the full cascade setup on a fresh repository, the workflow files are only one part; you also need the **release branch ruleset** and the **repository labels** that support the manual/conflict flow. GitHub supports all three pieces natively: workflow YAMLs in `.github/workflows/`, branch protection through branch rulesets or protection rules, and labels from the repository’s Issues/PR labels page.[^1][^2][^3]
 
 ## What to set up
 

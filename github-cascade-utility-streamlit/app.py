@@ -16,9 +16,23 @@ def main() -> None:
     st.set_page_config(page_title="Cascade Workflow Bootstrapper", layout="wide")
     st.title("Cascade Workflow Bootstrapper")
 
-    st.markdown(
-        """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
-    )
+    # Top description + User Guide button
+    col_main, col_guide = st.columns([4, 1])
+    with col_main:
+        st.markdown(
+            """Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."""
+        )
+    with col_guide:
+        show_guide = st.button("User Guide")
+
+    if show_guide:
+        guide_path = Path("Docs/manual-setup-workflows.md")
+        if guide_path.exists():
+            guide_text = guide_path.read_text(encoding="utf-8")
+            with st.expander("Cascade Merge – User Guide", expanded=True):
+                st.markdown(guide_text, unsafe_allow_html=True)
+        else:
+            st.warning("User guide file Docs/setup-guide-for-cascade-merge.md not found.")
 
     st.subheader("Configuration JSON")
 
@@ -27,8 +41,18 @@ def main() -> None:
         "Paste configuration JSON here",
         value=default_config_text,
         height=260,
-        help="Configuration includes a `repositories` list with `repository` and `patToken` fields.",
-    )
+        placeholder=(
+            "Each repository must include a patToken with:\n"
+            "- No expiration\n"
+            "- Repo permissions: contents:write, pull_requests:write, issues:write, administration:write\n"
+            "See the User Guide (top right) for a full JSON example."
+        ),
+        help=(
+            "Configuration includes a `repositories` list with `repository` and `patToken` fields. "
+            "Use a PAT with no expiration and sufficient repo/admin scopes so labels, secrets, "
+            "auto-merge, and PRs can be created."
+        ),
+    )  # [file:1572][file:1454]
 
     # Single button: validate + run
     run_clicked = st.button("Run setup & propagate")
@@ -140,14 +164,15 @@ table {
             unsafe_allow_html=True,
         )
 
-        # 2) Render table as pure markdown so Streamlit formats it correctly
+        # 2) Render table as pure markdown so Streamlit formats it correctly,
+        #    with headers having second-line clickable manual doc links.
         if table_rows:
             headers = [
                 "Repository",
-                "Labels (failed \u2192 Docs/manual-create-labels.md)",
-                "Repository secret (failed \u2192 Docs/manual-create-secret.md)",
-                "Enable Auto-Merge (failed \u2192 Docs/manual-enable-auto-merge.md)",
-                "Workflow code (failed \u2192 Docs/manual-setup-workflows.md)",
+                "Labels Required for Cascading<br>[manual-create-labels](Docs/manual-create-labels.md)",
+                "Repository secret for Cascading<br>[manual-create-secret](Docs/manual-create-secret.md)",
+                "Enable Auto-Merge for Cascading<br>[manual-enable-auto-merge](Docs/manual-enable-auto-merge.md)",
+                "Workflow Code Enabled for Cascading<br>[manual-setup-workflows](Docs/manual-setup-workflows.md)",
             ]
             header_line = "| " + " | ".join(headers) + " |"
             sep_line = "| " + " | ".join(["---"] * len(headers)) + " |"

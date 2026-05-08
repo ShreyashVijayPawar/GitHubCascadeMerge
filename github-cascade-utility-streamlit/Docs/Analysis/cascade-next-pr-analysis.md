@@ -1,9 +1,3 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
-
-# please explain entire file in details with examples for each step for better understanding. Refer attached file.
-
-You’ve built a pretty sophisticated workflow here, so focusing on the **high‑level flow** plus a **concrete example** for each stage is the best way to internalize it.[^1]
-
 Assume this situation:
 
 - App: `hnw-services-2`
