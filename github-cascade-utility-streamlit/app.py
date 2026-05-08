@@ -16,7 +16,7 @@ def main() -> None:
     st.set_page_config(page_title="Cascade Workflow Bootstrapper", layout="wide")
     st.title("Cascade Workflow Bootstrapper")
 
-    # Simple description only (no User Guide button)
+    # Simple description
     st.markdown(
         "Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."
     )
@@ -24,13 +24,13 @@ def main() -> None:
     # Input rules shown above the textbox on page load
     st.markdown(
         """
-**Input configuration rules:**
+**Input Configuration Checklist:**
 
 - Must be valid JSON with a top-level `repositories` array with each item in `repositories` must be a JSON object.  
 - Every object must have `repository: "owner/repo-name"` (e.g. `CitInternal/172598.onb-vm-gbl.hnw-services` or `CitInternal1/172598.onboarding-services.hnw-services`).  
-- Every object must have a non-empty `patToken` string using a GitHub PAT that:
-  - Has rights to manage labels, secrets, auto-merge, and PRs, and  
-  - Has no expiration, so it can be used continuously by the cascade-merge workflow.
+- Every object must have a non-empty `patToken` string using a classic GitHub PAT with:
+  - at least`repo` scope – Full control of private repositories, and `workflow` scope – Update GitHub Action workflows.
+  - Has no expiration (or longest possible expiry), so it can be used continuously by the cascade-merge workflow.
 """
     )
 
@@ -43,8 +43,8 @@ def main() -> None:
         height=260,
         help=(
             "Configuration includes a `repositories` list with `repository` and `patToken` fields. "
-            "Use a PAT with no expiration and sufficient repo/admin scopes so labels, secrets, "
-            "auto-merge, and PRs can be created."
+            "Use a classic PAT with `repo` and `workflow` scopes, no expiration, and sufficient repo/admin "
+            "permissions so labels, secrets, auto-merge, and workflow files can be created or updated."
         ),
     )
 

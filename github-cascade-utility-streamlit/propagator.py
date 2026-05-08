@@ -254,7 +254,8 @@ def sync_workflows_via_feature_branch(gh_repo, jira_id: str, templates_dir: str)
                         branch=feature_branch,
                     )
                     updated.append(target_path)
-            except Exception:
+            except Exception as e:
+                print("Update failed:", e.status, e.data)
                 gh_repo.create_file(
                     path=target_path,
                     message=commit_message,
