@@ -71,4 +71,4 @@ jobs:
               return;
             }
 
-            core.info(`Cascade PR #${prNumber} is not currently marked as conflicted...`);
+            core.info(`Cascade PR #${prNumber} is not currently marked as conflicted.`);
