@@ -159,7 +159,7 @@ jobs:
 
             const current = parseBranch(baseBranch);
             if (!current) {
-              core.info(`Base branch '${baseBranch}' does not match the release cascade pattern. Exiting...`);
+              core.info(`Base branch '${baseBranch}' does not match the release cascade pattern. Exiting.`);
               return;
             }
 
