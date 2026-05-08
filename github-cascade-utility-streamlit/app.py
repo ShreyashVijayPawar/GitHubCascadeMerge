@@ -21,20 +21,20 @@ def main() -> None:
         "Bootstraps repositories for the cascade merge workflow by configuring labels, secrets, auto-merge, and cascade workflow PRs automatically."
     )
 
-    st.subheader("Configuration JSON")
-
     # Input rules shown above the textbox on page load
     st.markdown(
         """
 **Input configuration rules:**
 
 - Must be valid JSON with a top-level `repositories` array with each item in `repositories` must be a JSON object.  
-- Every object must have `repository: "owner/name"` (e.g. `CitInternal/172598.onb-vm-gbl.hnw-services`).  
+- Every object must have `repository: "owner/repo-name"` (e.g. `CitInternal/172598.onb-vm-gbl.hnw-services` or `CitInternal1/172598.onboarding-services.hnw-services`).  
 - Every object must have a non-empty `patToken` string using a GitHub PAT that:
   - Has rights to manage labels, secrets, auto-merge, and PRs, and  
   - Has no expiration, so it can be used continuously by the cascade-merge workflow.
 """
     )
+
+    st.subheader("Configuration JSON")
 
     default_config_text = load_default_config_text()
     config_text = st.text_area(
