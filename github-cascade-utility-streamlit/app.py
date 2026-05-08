@@ -28,8 +28,7 @@ def main() -> None:
         """
 **Input configuration rules:**
 
-- Must be valid JSON with a top-level `repositories` array.  
-- Each item in `repositories` must be a JSON object.  
+- Must be valid JSON with a top-level `repositories` array with each item in `repositories` must be a JSON object.  
 - Every object must have `repository: "owner/name"` (e.g. `CitInternal/172598.onb-vm-gbl.hnw-services`).  
 - Every object must have a non-empty `patToken` string using a GitHub PAT that:
   - Has rights to manage labels, secrets, auto-merge, and PRs, and  
